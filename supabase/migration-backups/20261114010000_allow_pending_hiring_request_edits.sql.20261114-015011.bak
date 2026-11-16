@@ -1,0 +1,100 @@
+﻿begin;
+
+do $migration$
+declare
+  v_definition text;
+  v_old text;
+  v_new text;
+begin
+  v_definition := pg_get_functiondef(
+    'public.save_restaurant_hiring_request(uuid,uuid,text,text,integer,text,text,numeric,numeric,text[],text,text,numeric,numeric,text,text,text,text,boolean)'::regprocedure
+  );
+
+  -- Permit edits to pending_review requests, without permitting
+  -- edits to approved, rejected, or closed requests.
+  v_old := $old$
+    if existing_status not in (
+      'draft'::public.hiring_request_status,
+      'changes_requested'::public.hiring_request_status
+    ) then
+  $old$;
+
+  v_new := $new$
+    if existing_status not in (
+      'draft'::public.hiring_request_status,
+      'changes_requested'::public.hiring_request_status,
+      'pending_review'::public.hiring_request_status
+    ) then
+  $new$;
+
+  if position(v_old in v_definition) = 0 then
+    raise exception 'Could not find the expected edit-status guard. Migration aborted.';
+  end if;
+
+  v_definition := replace(v_definition, v_old, v_new);
+
+  -- Preserve pending_review regardless of whether the UI submits
+  -- the edit as a draft or as a review submission.
+  v_old := $old$
+    if not found then
+      raise exception 'Hiring request not found';
+    end if;
+
+    if existing_status not in (
+  $old$;
+
+  v_new := $new$
+    if not found then
+      raise exception 'Hiring request not found';
+    end if;
+
+    if existing_status = 'pending_review'::public.hiring_request_status then
+      next_status := 'pending_review'::public.hiring_request_status;
+    end if;
+
+    if existing_status not in (
+  $new$;
+
+  if position(v_old in v_definition) = 0 then
+    raise exception 'Could not find the expected status-preservation insertion point. Migration aborted.';
+  end if;
+
+  v_definition := replace(v_definition, v_old, v_new);
+
+  -- Distinguish an edit during review from a first submission.
+  v_old := $old$
+    case
+      when next_status = 'pending_review'
+        then 'restaurant_hiring_request_submitted'
+      else 'restaurant_hiring_request_saved'
+    end,
+  $old$;
+
+  v_new := $new$
+    case
+      when existing_status = 'pending_review'
+        then 'restaurant_hiring_request_updated_during_review'
+      when next_status = 'pending_review'
+        then 'restaurant_hiring_request_submitted'
+      else 'restaurant_hiring_request_saved'
+    end,
+  $new$;
+
+  if position(v_old in v_definition) = 0 then
+    raise exception 'Could not find the expected audit action. Migration aborted.';
+  end if;
+
+  v_definition := replace(v_definition, v_old, v_new);
+
+  execute v_definition;
+end;
+$migration$;
+
+comment on function public.save_restaurant_hiring_request(
+  uuid, uuid, text, text, integer, text, text,
+  numeric, numeric, text[], text, text,
+  numeric, numeric, text, text, text, text, boolean
+) is
+'Creates or updates a hiring request for an active verified restaurant through an authorized active member. Draft and changes-requested requests may be saved or submitted. Pending-review requests may be edited but remain pending review, with edits audited separately.';
+
+commit;

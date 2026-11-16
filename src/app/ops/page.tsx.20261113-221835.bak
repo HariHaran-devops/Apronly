@@ -1,0 +1,255 @@
+﻿
+import { Suspense } from "react";
+import { connection } from "next/server";
+import Link from "next/link";
+import { requireAnyRole } from "@/lib/auth/authorization";
+import { createClient } from "@/lib/supabase/server";
+import CandidateManagement from "./candidate-management";
+import HiringReview, { type HiringRequest } from "./hiring-review";
+import RestaurantReview, {
+  type RestaurantApplication,
+} from "./restaurant-review";
+
+const operationalAreas = [
+  {
+    category: "PEOPLE",
+    title: "Candidate management",
+    description:
+      "Search candidate profiles, experience, skills and employment preferences.",
+    status: "Candidate search active",
+  },
+  {
+    category: "BUSINESS",
+    title: "Restaurant verification",
+    description:
+      "Review restaurant applications and approve business accounts.",
+    status: "Verification workflow active",
+  },
+  {
+    category: "RECRUITMENT",
+    title: "Job approvals",
+    description:
+      "Review hiring requirements before they enter Apronly's private matching workflow.",
+    status: "Review workflow active",
+  },
+  {
+    category: "RECRUITMENT",
+    title: "Screening and shortlisting",
+    description:
+      "Evaluate matched candidates and manage private shortlists.",
+    status: "Matching foundation deployed",
+  },
+  {
+    category: "RECRUITMENT",
+    title: "Interviews and placements",
+    description:
+      "Coordinate interviews and track selection, joining and placement.",
+    status: "Not implemented",
+  },
+  {
+    category: "OPERATIONS",
+    title: "Referrals and finance",
+    description:
+      "Manage referral eligibility, commissions, invoices and payouts.",
+    status: "Not implemented",
+  },
+];
+
+async function OperationsDashboardContent() {
+  await connection();
+
+  // Only database-authorized administrators can access this workspace.
+  await requireAnyRole(["admin"]);
+
+  const supabase = await createClient();
+
+  const [
+    { data: hiringData, error: hiringError },
+    { data: approvedHiringData, error: approvedHiringError },
+    { data: restaurantData, error: restaurantError },
+  ] = await Promise.all([
+    supabase
+      .from("restaurant_hiring_requests")
+      .select(
+        "id, restaurant_id, created_by, title, department, openings, description, responsibilities, minimum_experience_years, maximum_experience_years, required_skills, employment_type, shift_type, minimum_salary, maximum_salary, salary_currency, salary_period, city, joining_timeline, status, created_at, review_note, reviewed_by, reviewed_at"
+      )
+      .eq("status", "pending_review")
+      .order("created_at", { ascending: true }),
+
+    supabase
+      .from("restaurant_hiring_requests")
+      .select(
+        "id, restaurant_id, created_by, title, department, openings, description, responsibilities, minimum_experience_years, maximum_experience_years, required_skills, employment_type, shift_type, minimum_salary, maximum_salary, salary_currency, salary_period, city, joining_timeline, status, created_at, review_note, reviewed_by, reviewed_at"
+      )
+      .eq("status", "approved")
+      .order("created_at", { ascending: false })
+      .limit(100),
+
+    supabase
+      .from("restaurants")
+      .select(`
+        id,
+        name,
+        legal_name,
+        slug,
+        description,
+        city,
+        business_email,
+        business_phone,
+        website_url,
+        category,
+        status,
+        verification_status,
+        review_status,
+        review_note,
+        reviewed_by,
+        reviewed_at,
+        created_at,
+        outlets:restaurant_outlets (
+          id,
+          name,
+          city,
+          address_line1,
+          address_line2,
+          landmark,
+          state,
+          postal_code,
+          country,
+          phone,
+          email,
+          is_primary
+        )
+      `)
+      .eq("review_status", "pending_review")
+      .order("created_at", { ascending: true }),
+  ]);
+
+  const hiringRequests = (hiringData ?? []) as HiringRequest[];
+  const approvedHiringRequests = (approvedHiringData ?? []) as HiringRequest[];
+
+  const restaurantApplications =
+    (restaurantData ?? []) as unknown as RestaurantApplication[];
+
+  return (
+    <main className="min-h-screen bg-background">
+      <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:py-12">
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-xl font-semibold tracking-tight"
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-sm text-white">
+              A
+            </span>
+            Apronly
+          </Link>
+
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-muted sm:inline">
+              Operations workspace
+            </span>
+
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="rounded-xl border border-border px-4 py-2 text-sm font-medium transition hover:bg-surface-muted"
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
+        </header>
+
+        <section className="py-12 sm:py-16">
+          <p className="text-sm font-medium text-sage">
+            APRONLY OPERATIONS
+          </p>
+
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+            Operations overview
+          </h1>
+
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-muted">
+            Manage the recruitment lifecycle across candidates, restaurant
+            partners and hiring operations. This workspace is the central
+            control point for Apronly&apos;s managed recruitment service.
+          </p>
+        </section>
+
+        <section>
+          <div className="mb-5">
+            <h2 className="text-lg font-semibold">
+              Operational workspaces
+            </h2>
+
+            <p className="mt-1 text-sm text-muted">
+              Operational modules and their implementation status.
+            </p>
+          </div>
+
+          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            {operationalAreas.map((area) => (
+              <article
+                key={area.title}
+                className="rounded-3xl border border-border bg-surface p-6"
+              >
+                <p className="text-xs font-semibold tracking-wider text-sage">
+                  {area.category}
+                </p>
+
+                <h3 className="mt-4 text-lg font-semibold">
+                  {area.title}
+                </h3>
+
+                <p className="mt-2 min-h-14 text-sm leading-6 text-muted">
+                  {area.description}
+                </p>
+
+                <div className="mt-5 border-t border-border pt-4">
+                  <span className="text-xs font-medium text-muted">
+                    {area.status}
+                  </span>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        {/* Admin-only candidate search and profile review */}
+        <CandidateManagement />
+
+        {/* Restaurant verification queue */}
+        <RestaurantReview
+          applications={restaurantApplications}
+          loadError={restaurantError?.message ?? null}
+        />
+
+        {/* Restaurant hiring request approval queue */}
+        <HiringReview
+          requests={hiringRequests}
+          loadError={hiringError?.message ?? null}
+        />
+
+        <footer className="mt-12 border-t border-border py-6 text-xs text-muted">
+          Apronly · Internal recruitment operations.
+        </footer>
+      </div>
+    </main>
+  );
+}
+
+export default function OperationsDashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="min-h-screen bg-background p-8">
+          <p className="text-sm text-muted">
+            Loading operations workspace...
+          </p>
+        </main>
+      }
+    >
+      <OperationsDashboardContent />
+    </Suspense>
+  );
+}

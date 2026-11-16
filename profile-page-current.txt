@@ -1,0 +1,345 @@
+﻿
+import { Suspense } from "react";
+import Link from "next/link";
+import { connection } from "next/server";
+import { requireAnyRole } from "@/lib/auth/authorization";
+import { createClient } from "@/lib/supabase/server";
+import RestaurantManagement from "../restaurant-management";
+
+type Restaurant = {
+  id: string;
+  name: string;
+  legal_name: string | null;
+  description: string | null;
+  city: string;
+  business_email: string | null;
+  business_phone: string | null;
+  website_url: string | null;
+  category: string | null;
+  status: string;
+  verification_status: string;
+};
+
+type Outlet = {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  city: string;
+  address_line1: string | null;
+  address_line2: string | null;
+  landmark: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string;
+  phone: string | null;
+  email: string | null;
+  is_primary: boolean;
+};
+
+async function RestaurantProfileContent() {
+  await connection();
+
+  const access = await requireAnyRole(["restaurant_staff"]);
+  const supabase = await createClient();
+
+  const { data: memberships, error: membershipError } = await supabase
+    .from("restaurant_memberships")
+    .select("id, restaurant_id, role, status")
+    .eq("user_id", access.userId);
+
+  if (membershipError) {
+    console.error("Restaurant membership lookup failed:", {
+      code: membershipError.code,
+    });
+  }
+
+  const activeMemberships = (memberships ?? []).filter(
+    (membership) => membership.status === "active",
+  );
+
+  const restaurantIds = activeMemberships.map(
+    (membership) => membership.restaurant_id,
+  );
+
+  let restaurants: Restaurant[] = [];
+  let outlets: Outlet[] = [];
+  let loadError = false;
+
+  if (restaurantIds.length > 0) {
+    const [restaurantResult, outletResult] = await Promise.all([
+      supabase
+        .from("restaurants")
+        .select(
+          "id, name, legal_name, description, city, business_email, business_phone, website_url, category, status, verification_status",
+        )
+        .in("id", restaurantIds),
+
+      supabase
+        .from("restaurant_outlets")
+        .select(
+          "id, restaurant_id, name, city, address_line1, address_line2, landmark, state, postal_code, country, phone, email, is_primary",
+        )
+        .in("restaurant_id", restaurantIds)
+        .order("is_primary", { ascending: false })
+        .order("name", { ascending: true }),
+    ]);
+
+    if (restaurantResult.error || outletResult.error) {
+      loadError = true;
+      console.error("Restaurant profile data lookup failed:", {
+        restaurantError: restaurantResult.error?.code,
+        outletError: outletResult.error?.code,
+      });
+    } else {
+      restaurants = (restaurantResult.data ?? []) as Restaurant[];
+      outlets = (outletResult.data ?? []) as Outlet[];
+    }
+  }
+
+  const restaurantById = new Map(
+    restaurants.map((restaurant) => [restaurant.id, restaurant]),
+  );
+
+  const outletsByRestaurant = new Map<string, Outlet[]>();
+
+  for (const outlet of outlets) {
+    const current = outletsByRestaurant.get(outlet.restaurant_id) ?? [];
+    current.push(outlet);
+    outletsByRestaurant.set(outlet.restaurant_id, current);
+  }
+
+  return (
+    <main className="min-h-screen bg-[#F5F1E8] text-[#292B24]">
+      <div className="min-h-screen lg:grid lg:grid-cols-[250px_minmax(0,1fr)]">
+        <aside className="hidden border-r border-[#E6DFD2] bg-[#F1EBDD] px-6 py-8 lg:flex lg:flex-col">
+          <Link href="/" className="flex items-center gap-3 px-2">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#243D2C] font-serif text-lg text-white">
+              A
+            </span>
+            <span className="font-serif text-xl font-semibold">Apronly</span>
+          </Link>
+
+          <p className="mb-4 mt-12 px-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[#858276]">
+            Restaurant workspace
+          </p>
+
+          <nav className="space-y-2" aria-label="Restaurant workspace">
+            <Link
+              href="/partner"
+              className="block rounded-xl px-4 py-3 text-sm text-[#5F6258] transition hover:bg-white/70"
+            >
+              Overview
+            </Link>
+
+            <Link
+              href="/partner/profile"
+              className="block rounded-xl bg-[#243D2C] px-4 py-3 text-sm font-semibold text-white"
+            >
+              Business Profile
+            </Link>
+
+            <Link
+              href="/partner/hiring"
+              className="block rounded-xl px-4 py-3 text-sm text-[#5F6258] transition hover:bg-white/70"
+            >
+              Hiring Management
+            </Link>
+          </nav>
+
+          <div className="mt-auto rounded-2xl border border-[#E3DCCF] bg-white/65 p-4">
+            <p className="text-sm font-semibold">Need assistance?</p>
+            <p className="mt-2 text-xs leading-5 text-[#77766F]">
+              Help and support for your restaurant workspace.
+            </p>
+          </div>
+        </aside>
+
+        <div className="min-w-0">
+          <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[#E8E1D6] bg-[#F5F1E8]/90 px-5 py-4 backdrop-blur-xl sm:px-8">
+            <Link
+              href="/partner"
+              className="font-serif text-lg font-semibold lg:hidden"
+            >
+              Apronly
+            </Link>
+
+            <p className="hidden text-xs text-[#858276] lg:block">
+              Restaurant workspace / Business Profile
+            </p>
+
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="rounded-full border border-[#E4DDD1] bg-white/80 px-4 py-2 text-xs font-semibold transition hover:bg-white"
+              >
+                Sign out
+              </button>
+            </form>
+          </header>
+
+          <div className="mx-auto max-w-[1200px] px-5 py-8 sm:px-8 lg:px-10">
+            <div className="mb-8">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#71836A]">
+                Your business
+              </p>
+              <h1 className="mt-2 font-serif text-3xl tracking-tight sm:text-4xl">
+                Business Profile
+              </h1>
+              <p className="mt-3 max-w-xl text-sm leading-6 text-[#77766F]">
+                Manage your restaurant information and outlet locations.
+                Keep your business details up to date.
+              </p>
+            </div>
+
+            <div className="mb-6 flex flex-wrap gap-2 lg:hidden">
+              <Link
+                href="/partner"
+                className="rounded-full border border-[#E4DDD1] bg-white px-4 py-2 text-xs font-medium"
+              >
+                Overview
+              </Link>
+              <Link
+                href="/partner/profile"
+                className="rounded-full bg-[#243D2C] px-4 py-2 text-xs font-medium text-white"
+              >
+                Business Profile
+              </Link>
+              <Link
+                href="/partner/hiring"
+                className="rounded-full border border-[#E4DDD1] bg-white px-4 py-2 text-xs font-medium"
+              >
+                Hiring
+              </Link>
+            </div>
+
+            {membershipError || loadError ? (
+              <div className="rounded-2xl border border-[#EBD5D1] bg-[#FBF0EE] p-6">
+                <h2 className="font-semibold">Unable to load your profile</h2>
+                <p className="mt-2 text-sm leading-6 text-[#77766F]">
+                  We couldn't retrieve your restaurant information. Please
+                  refresh the page or contact Apronly support.
+                </p>
+              </div>
+            ) : activeMemberships.length === 0 ? (
+              <div className="rounded-2xl border border-[#E5DED2] bg-white p-6">
+                <h2 className="font-serif text-xl">
+                  No active restaurant membership
+                </h2>
+                <p className="mt-2 text-sm text-[#77766F]">
+                  Your restaurant workspace is not currently available.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {activeMemberships.map((membership) => {
+                  const restaurant = restaurantById.get(
+                    membership.restaurant_id,
+                  );
+
+                  if (!restaurant) {
+                    return (
+                      <div
+                        key={membership.id}
+                        className="rounded-2xl border border-[#E9DCC6] bg-[#FAF4E9] p-6"
+                      >
+                        <p className="font-semibold">
+                          Restaurant details unavailable
+                        </p>
+                        <p className="mt-2 text-sm text-[#77766F]">
+                          We couldn't retrieve this restaurant's information.
+                          Please contact Apronly support.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  const approved =
+                    restaurant.status === "active" &&
+                    restaurant.verification_status === "verified";
+
+                  return (
+                    <section
+                      key={membership.id}
+                      className="overflow-hidden rounded-[26px] border border-[#E7E0D5] bg-white shadow-[0_10px_35px_rgba(40,38,30,0.04)]"
+                    >
+                      <div className="border-b border-[#EAE4D9] bg-gradient-to-r from-[#F5F1E7] to-[#EAEDE3] px-6 py-5 sm:px-8">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h2 className="font-serif text-2xl">
+                              {restaurant.name}
+                            </h2>
+                            <p className="mt-1 text-sm text-[#77766F]">
+                              {restaurant.city}
+                            </p>
+                          </div>
+
+                          <span
+                            className={`rounded-full px-3 py-1.5 text-xs font-semibold ${
+                              approved
+                                ? "bg-[#E5EFDF] text-[#3D633D]"
+                                : "bg-[#F5EAD8] text-[#8A673A]"
+                            }`}
+                          >
+                            {approved
+                              ? "Verified"
+                              : restaurant.verification_status.replaceAll("_", " ")}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="p-5 sm:p-8">
+                        {approved ? (
+                          <RestaurantManagement
+                            restaurant={restaurant}
+                            outlets={
+                              outletsByRestaurant.get(restaurant.id) ?? []
+                            }
+                            canEdit={membership.role === "owner"}
+                          />
+                        ) : (
+                          <div className="rounded-2xl border border-[#E9DCC6] bg-[#FAF4E9] p-5">
+                            <h3 className="font-semibold">
+                              Business profile management is not available yet
+                            </h3>
+                            <p className="mt-2 text-sm leading-6 text-[#77766F]">
+                              Your restaurant application is currently{" "}
+                              {restaurant.status.replaceAll("_", " ")} and
+                              verification is{" "}
+                              {restaurant.verification_status.replaceAll("_", " ")}.
+                              Management becomes available after approval.
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+
+            <footer className="mt-12 border-t border-[#E6DFD2] py-6 text-xs text-[#898679]">
+              Apronly Â· Hospitality recruitment, thoughtfully connected.
+            </footer>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export default function RestaurantProfilePage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[#F5F1E8]">
+          <p className="text-sm text-[#77766F]">
+            Loading your business profile...
+          </p>
+        </main>
+      }
+    >
+      <RestaurantProfileContent />
+    </Suspense>
+  );
+}
+

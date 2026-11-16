@@ -1,0 +1,2771 @@
+
+
+==============================
+FILE: src/app/partner/page.tsx
+==============================
+
+import { Suspense } from "react";
+import { connection } from "next/server";
+import Link from "next/link";
+import { requireAnyRole } from "@/lib/auth/authorization";
+import { createClient } from "@/lib/supabase/server";
+import RestaurantManagement from "./restaurant-management";
+import HiringManagement from "./hiring-management";
+
+type RestaurantStatus = "pending" | "active" | "suspended" | "rejected";
+type VerificationStatus = "unverified" | "pending" | "verified" | "rejected";
+type MembershipStatus = "invited" | "active" | "suspended" | "revoked";
+
+type Restaurant = {
+  id: string;
+  name: string;
+  legal_name: string | null;
+  description: string | null;
+  city: string;
+  business_email: string | null;
+  business_phone: string | null;
+  website_url: string | null;
+  category: string | null;
+  status: RestaurantStatus;
+  verification_status: VerificationStatus;
+};
+
+type Outlet = {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  city: string;
+  address_line1: string | null;
+  address_line2: string | null;
+  landmark: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string;
+  phone: string | null;
+  email: string | null;
+  is_primary: boolean;
+};
+
+function getApplicationState(
+  restaurantStatus: RestaurantStatus,
+  verificationStatus: VerificationStatus,
+  membershipStatus: MembershipStatus
+) {
+  if (membershipStatus === "suspended" || membershipStatus === "revoked") {
+    return {
+      title: "Membership restricted",
+      description:
+        "Your access to this restaurant workspace is currently restricted. Contact Apronly support for assistance.",
+      tone: "warning",
+      approved: false,
+    };
+  }
+
+  if (membershipStatus === "invited") {
+    return {
+      title: "Invitation pending",
+      description: "Your restaurant membership has not been activated yet.",
+      tone: "neutral",
+      approved: false,
+    };
+  }
+
+  if (restaurantStatus === "suspended") {
+    return {
+      title: "Restaurant suspended",
+      description:
+        "This restaurant workspace is currently suspended. Contact Apronly support for further information.",
+      tone: "warning",
+      approved: false,
+    };
+  }
+
+  if (
+    restaurantStatus === "rejected" ||
+    verificationStatus === "rejected"
+  ) {
+    return {
+      title: "Application not approved",
+      description:
+        "Your restaurant application was not approved. Please contact Apronly support for information about the decision and possible next steps.",
+      tone: "danger",
+      approved: false,
+    };
+  }
+
+  if (
+    restaurantStatus === "active" &&
+    verificationStatus === "verified" &&
+    membershipStatus === "active"
+  ) {
+    return {
+      title: "Restaurant approved",
+      description:
+        "Your restaurant has been verified and approved. Your business, outlet management and hiring workspace are available below.",
+      tone: "success",
+      approved: true,
+    };
+  }
+
+  return {
+    title: "Application under review",
+    description:
+      "Your restaurant application has been received. Apronly will review your details before enabling hiring capabilities.",
+    tone: "neutral",
+    approved: false,
+  };
+}
+
+function StatusCard({
+  title,
+  description,
+  tone,
+}: {
+  title: string;
+  description: string;
+  tone: string;
+}) {
+  const toneClasses = {
+    success: "border-sage/30 bg-sage/10",
+    warning: "border-accent/30 bg-accent/10",
+    danger: "border-danger/20 bg-danger/5",
+    neutral: "border-border bg-surface-muted",
+  };
+
+  const selectedTone =
+    toneClasses[tone as keyof typeof toneClasses] ?? toneClasses.neutral;
+
+  return (
+    <div className={"rounded-2xl border p-5 " + selectedTone}>
+      <h3 className="font-semibold">{title}</h3>
+      <p className="mt-2 text-sm leading-6 text-muted">{description}</p>
+    </div>
+  );
+}
+
+async function RestaurantDashboardContent() {
+  await connection();
+
+  const access = await requireAnyRole(["restaurant_staff"]);
+  const supabase = await createClient();
+
+  const { data: memberships, error: membershipError } = await supabase
+    .from("restaurant_memberships")
+    .select("id, restaurant_id, role, status")
+    .eq("user_id", access.userId);
+
+  if (membershipError) {
+    console.error("Restaurant membership lookup failed:", {
+      code: membershipError.code,
+    });
+  }
+
+  const membershipRecords = memberships ?? [];
+
+  const activeRestaurantIds = membershipRecords
+    .filter((membership) => membership.status === "active")
+    .map((membership) => membership.restaurant_id);
+
+  let restaurantRecords: Restaurant[] = [];
+  let outletRecords: Outlet[] = [];
+  let restaurantQueryFailed = false;
+  let outletQueryFailed = false;
+
+  if (activeRestaurantIds.length > 0) {
+    const [restaurantResult, outletResult] = await Promise.all([
+      supabase
+        .from("restaurants")
+        .select(
+          "id, name, legal_name, description, city, business_email, business_phone, website_url, category, status, verification_status"
+        )
+        .in("id", activeRestaurantIds),
+
+      supabase
+        .from("restaurant_outlets")
+        .select(
+          "id, restaurant_id, name, city, address_line1, address_line2, landmark, state, postal_code, country, phone, email, is_primary"
+        )
+        .in("restaurant_id", activeRestaurantIds)
+        .order("is_primary", { ascending: false })
+        .order("name", { ascending: true }),
+    ]);
+
+    if (restaurantResult.error) {
+      console.error("Restaurant details lookup failed:", {
+        code: restaurantResult.error.code,
+      });
+      restaurantQueryFailed = true;
+    } else {
+      restaurantRecords = (restaurantResult.data ?? []) as Restaurant[];
+    }
+
+    if (outletResult.error) {
+      console.error("Restaurant outlet lookup failed:", {
+        code: outletResult.error.code,
+      });
+      outletQueryFailed = true;
+    } else {
+      outletRecords = (outletResult.data ?? []) as Outlet[];
+    }
+  }
+
+  const restaurantById = new Map(
+    restaurantRecords.map((restaurant) => [restaurant.id, restaurant])
+  );
+
+  const outletsByRestaurant = new Map<string, Outlet[]>();
+
+  for (const outlet of outletRecords) {
+    const existing = outletsByRestaurant.get(outlet.restaurant_id) ?? [];
+    existing.push(outlet);
+    outletsByRestaurant.set(outlet.restaurant_id, existing);
+  }
+
+  const membershipLookupFailed = Boolean(membershipError);
+
+  return (
+    <main className="min-h-screen bg-background">
+      <div className="mx-auto max-w-6xl px-5 py-8 sm:px-8 lg:py-12">
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-xl font-semibold tracking-tight"
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-sm text-white">
+              A
+            </span>
+            Apronly
+          </Link>
+
+          <div className="flex items-center gap-3">
+            <span className="hidden text-sm text-muted sm:inline">
+              Restaurant workspace
+            </span>
+
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="rounded-xl border border-border px-4 py-2 text-sm font-medium transition hover:bg-surface-muted"
+              >
+                Sign out
+              </button>
+            </form>
+          </div>
+        </header>
+
+        <section className="py-12 sm:py-16">
+          <p className="text-sm font-medium text-sage">
+            RESTAURANT PARTNERSHIP
+          </p>
+
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+            Your restaurant workspace
+          </h1>
+
+          <p className="mt-4 max-w-2xl text-sm leading-7 text-muted">
+            Manage your restaurant business information, physical outlets and
+            hiring requirements through Apronly.
+          </p>
+        </section>
+
+        {membershipLookupFailed ? (
+          <StatusCard
+            title="Unable to load your workspace"
+            description="We couldn't retrieve your restaurant membership details. Please refresh the page or contact Apronly support if the problem continues."
+            tone="danger"
+          />
+        ) : membershipRecords.length === 0 ? (
+          <StatusCard
+            title="Restaurant membership unavailable"
+            description="Your account currently has no restaurant membership. Please contact Apronly support to resolve your account access."
+            tone="warning"
+          />
+        ) : (
+          <section className="space-y-8">
+            <div>
+              <h2 className="text-xl font-semibold">Your restaurants</h2>
+              <p className="mt-2 text-sm text-muted">
+                Application, verification and management for your restaurant
+                memberships.
+              </p>
+            </div>
+
+            {membershipRecords.map((membership) => {
+              const restaurant = restaurantById.get(
+                membership.restaurant_id
+              );
+
+              if (membership.status === "active" && restaurantQueryFailed) {
+                return (
+                  <article
+                    key={membership.id}
+                    className="rounded-3xl border border-border bg-surface p-6 sm:p-8"
+                  >
+                    <StatusCard
+                      title="Unable to load restaurant details"
+                      description="Your membership was found, but we couldn't retrieve the restaurant's approval details. Management access remains unavailable until this is resolved."
+                      tone="warning"
+                    />
+                  </article>
+                );
+              }
+
+              if (membership.status === "active" && !restaurant) {
+                return (
+                  <article
+                    key={membership.id}
+                    className="rounded-3xl border border-border bg-surface p-6 sm:p-8"
+                  >
+                    <StatusCard
+                      title="Restaurant details unavailable"
+                      description="Your active membership was found, but we couldn't retrieve the restaurant record. Contact Apronly support."
+                      tone="warning"
+                    />
+                  </article>
+                );
+              }
+
+              const applicationState = restaurant
+                ? getApplicationState(
+                    restaurant.status,
+                    restaurant.verification_status,
+                    membership.status as MembershipStatus
+                  )
+                : membership.status === "active"
+                  ? null
+                  : {
+                      title: "Membership restricted",
+                      description:
+                        "This membership is not active. Restaurant details are unavailable until access is restored.",
+                      tone: "warning",
+                      approved: false,
+                    };
+
+              if (!applicationState) return null;
+
+              const canEdit =
+                applicationState.approved && membership.role === "owner";
+
+              const canEditPendingApplication =
+                restaurant?.status === "pending" &&
+                restaurant.verification_status === "unverified" &&
+                membership.status === "active" &&
+                membership.role === "owner";
+
+              return (
+                <article
+                  key={membership.id}
+                  className="rounded-3xl border border-border bg-surface p-6 sm:p-8"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <h3 className="text-xl font-semibold">
+                        {restaurant?.name ?? "Restaurant workspace"}
+                      </h3>
+
+                      {restaurant && (
+                        <p className="mt-1 text-sm text-muted">
+                          {restaurant.city}
+                        </p>
+                      )}
+                    </div>
+
+                    <span className="rounded-full border border-border bg-surface-muted px-3 py-1 text-xs font-medium capitalize">
+                      {membership.role}
+                    </span>
+                  </div>
+
+                  <div className="mt-6">
+                    <StatusCard
+                      title={applicationState.title}
+                      description={applicationState.description}
+                      tone={applicationState.tone}
+                    />
+
+                    {canEditPendingApplication && (
+                      <div className="mt-4">
+                        <Link
+                          href="/partner/edit"
+                          className="inline-flex items-center justify-center rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90"
+                        >
+                          Edit application
+                        </Link>
+                      </div>
+                    )}
+                  </div>
+
+                  {restaurant && (
+                    <div className="mt-6 grid gap-4 border-t border-border pt-5 sm:grid-cols-2">
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted">
+                          Restaurant status
+                        </p>
+                        <p className="mt-2 text-sm font-medium capitalize">
+                          {restaurant.status}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs font-medium uppercase tracking-wider text-muted">
+                          Verification
+                        </p>
+                        <p className="mt-2 text-sm font-medium capitalize">
+                          {restaurant.verification_status}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {applicationState.approved && restaurant && (
+                    <>
+                      {outletQueryFailed ? (
+                        <div className="mt-6">
+                          <StatusCard
+                            title="Unable to load outlets"
+                            description="Your restaurant is approved, but outlet information could not be retrieved. Refresh the page or contact support."
+                            tone="warning"
+                          />
+                        </div>
+                      ) : (
+                        <RestaurantManagement
+                          restaurant={restaurant}
+                          outlets={
+                            outletsByRestaurant.get(restaurant.id) ?? []
+                          }
+                          canEdit={canEdit}
+                        />
+                      )}
+
+                      <HiringManagement restaurantId={restaurant.id} />
+                    </>
+                  )}
+                </article>
+              );
+            })}
+          </section>
+        )}
+
+        <footer className="mt-12 border-t border-border py-6 text-xs text-muted">
+          Apronly · Hospitality recruitment, thoughtfully connected.
+        </footer>
+      </div>
+    </main>
+  );
+}
+
+export default function RestaurantDashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-background">
+          <p className="text-sm text-muted">
+            Loading your restaurant workspace...
+          </p>
+        </main>
+      }
+    >
+      <RestaurantDashboardContent />
+    </Suspense>
+  );
+}
+
+
+
+==============================
+FILE: src/app/partner/restaurant-management.tsx
+==============================
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+
+type Restaurant = {
+  id: string;
+  name: string;
+  legal_name: string | null;
+  description: string | null;
+  business_email: string | null;
+  business_phone: string | null;
+  website_url: string | null;
+  category: string | null;
+};
+
+type Outlet = {
+  id: string;
+  name: string;
+  city: string;
+  address_line1: string | null;
+  address_line2: string | null;
+  landmark: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string;
+  phone: string | null;
+  email: string | null;
+  is_primary: boolean;
+};
+
+type Props = {
+  restaurant: Restaurant;
+  outlets: Outlet[];
+  canEdit: boolean;
+};
+
+const inputClass =
+  "w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-accent disabled:opacity-60";
+
+const labelClass = "mb-2 block text-sm font-medium";
+
+const categories = [
+  "Fine Dining",
+  "Casual Dining",
+  "Cafe",
+  "Quick Service Restaurant",
+  "Bakery",
+  "Cloud Kitchen",
+  "Bar and Lounge",
+  "Hotel Restaurant",
+  "Food Court",
+  "Other",
+];
+
+const emptyOutlet = {
+  name: "",
+  city: "",
+  address_line1: "",
+  address_line2: "",
+  landmark: "",
+  state: "",
+  postal_code: "",
+  country: "India",
+  phone: "",
+  email: "",
+  is_primary: false,
+};
+
+function normalize(value: string) {
+  return value.trim().replace(/\s+/g, " ");
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  required = false,
+  type = "text",
+  maxLength,
+  placeholder,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  required?: boolean;
+  type?: string;
+  maxLength?: number;
+  placeholder?: string;
+}) {
+  return (
+    <label className="block">
+      <span className={labelClass}>
+        {label}
+        {required && <span className="ml-1 text-danger">*</span>}
+      </span>
+      <input
+        className={inputClass}
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        required={required}
+        maxLength={maxLength}
+        placeholder={placeholder}
+      />
+    </label>
+  );
+}
+
+export default function RestaurantManagement({
+  restaurant,
+  outlets: initialOutlets,
+  canEdit,
+}: Props) {
+  const router = useRouter();
+
+  const [profile, setProfile] = useState({
+    name: restaurant.name ?? "",
+    legalName: restaurant.legal_name ?? "",
+    description: restaurant.description ?? "",
+    email: restaurant.business_email ?? "",
+    phone: restaurant.business_phone ?? "",
+    website: restaurant.website_url ?? "",
+    category: restaurant.category ?? "",
+  });
+
+  const [outlets, setOutlets] = useState(initialOutlets);
+  const [editingProfile, setEditingProfile] = useState(false);
+  const [editingOutlet, setEditingOutlet] = useState<string | null>(null);
+  const [outletForm, setOutletForm] = useState(emptyOutlet);
+  const [showOutletForm, setShowOutletForm] = useState(false);
+
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingOutlet, setSavingOutlet] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  function updateProfile(key: keyof typeof profile, value: string) {
+    setProfile((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateOutlet(
+    key: keyof typeof emptyOutlet,
+    value: string | boolean,
+  ) {
+    setOutletForm((current) => ({ ...current, [key]: value }));
+  }
+
+  async function saveProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    if (!canEdit || savingProfile) return;
+
+    const clean = {
+      name: normalize(profile.name),
+      legalName: normalize(profile.legalName),
+      description: profile.description.trim(),
+      email: profile.email.trim().toLowerCase(),
+      phone: profile.phone.trim(),
+      website: profile.website.trim(),
+      category: normalize(profile.category),
+    };
+
+    if (clean.name.length < 2) {
+      setError("Restaurant name must contain at least 2 characters.");
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)) {
+      setError("Enter a valid business email address.");
+      return;
+    }
+
+    if (!/^[+0-9() .-]{7,30}$/.test(clean.phone)) {
+      setError("Enter a valid business phone number.");
+      return;
+    }
+
+    if (
+      clean.website &&
+      !/^https?:\/\/.+/i.test(clean.website)
+    ) {
+      setError("Website must start with http:// or https://.");
+      return;
+    }
+
+    if (!clean.category) {
+      setError("Select a restaurant category.");
+      return;
+    }
+
+    setSavingProfile(true);
+
+    try {
+      const supabase = createClient();
+
+      const { error: saveError } = await supabase.rpc(
+        "update_restaurant_business_profile",
+        {
+          p_restaurant_id: restaurant.id,
+          p_name: clean.name,
+          p_legal_name: clean.legalName || null,
+          p_description: clean.description || null,
+          p_business_email: clean.email,
+          p_business_phone: clean.phone,
+          p_website_url: clean.website || null,
+          p_category: clean.category,
+        },
+      );
+
+      if (saveError) throw saveError;
+
+      setProfile({
+        name: clean.name,
+        legalName: clean.legalName,
+        description: clean.description,
+        email: clean.email,
+        phone: clean.phone,
+        website: clean.website,
+        category: clean.category,
+      });
+
+      setEditingProfile(false);
+      setSuccess("Business profile updated successfully.");
+      router.refresh();
+    } catch (err) {
+      console.error("Restaurant profile update failed:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to update restaurant profile.",
+      );
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  function startNewOutlet() {
+    setError("");
+    setSuccess("");
+    setEditingOutlet(null);
+    setOutletForm({
+      ...emptyOutlet,
+      is_primary: outlets.length === 0,
+    });
+    setShowOutletForm(true);
+  }
+
+  function startEditOutlet(outlet: Outlet) {
+    setError("");
+    setSuccess("");
+    setEditingOutlet(outlet.id);
+    setOutletForm({
+      name: outlet.name,
+      city: outlet.city,
+      address_line1: outlet.address_line1 ?? "",
+      address_line2: outlet.address_line2 ?? "",
+      landmark: outlet.landmark ?? "",
+      state: outlet.state ?? "",
+      postal_code: outlet.postal_code ?? "",
+      country: outlet.country,
+      phone: outlet.phone ?? "",
+      email: outlet.email ?? "",
+      is_primary: outlet.is_primary,
+    });
+    setShowOutletForm(true);
+  }
+
+  async function saveOutlet(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setSuccess("");
+
+    if (!canEdit || savingOutlet) return;
+
+    const clean = {
+      name: normalize(outletForm.name),
+      city: normalize(outletForm.city),
+      address_line1: normalize(outletForm.address_line1),
+      address_line2: normalize(outletForm.address_line2),
+      landmark: normalize(outletForm.landmark),
+      state: normalize(outletForm.state),
+      postal_code: normalize(outletForm.postal_code),
+      country: normalize(outletForm.country),
+      phone: outletForm.phone.trim(),
+      email: outletForm.email.trim().toLowerCase(),
+      is_primary: outletForm.is_primary,
+    };
+
+    if (clean.name.length < 2 || clean.city.length < 2) {
+      setError("Enter a valid outlet name and city.");
+      return;
+    }
+
+    if (clean.address_line1.length < 5) {
+      setError("Enter the complete outlet address.");
+      return;
+    }
+
+    if (!clean.state || !clean.postal_code || !clean.country) {
+      setError("State, postal code and country are required.");
+      return;
+    }
+
+    if (
+      clean.phone &&
+      !/^[+0-9() .-]{7,30}$/.test(clean.phone)
+    ) {
+      setError("Enter a valid outlet phone number.");
+      return;
+    }
+
+    if (
+      clean.email &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)
+    ) {
+      setError("Enter a valid outlet email address.");
+      return;
+    }
+
+    setSavingOutlet(true);
+
+    try {
+      const supabase = createClient();
+
+      const { data: savedId, error: saveError } = await supabase.rpc(
+        "save_restaurant_outlet",
+        {
+          p_restaurant_id: restaurant.id,
+          p_outlet_id: editingOutlet,
+          p_name: clean.name,
+          p_city: clean.city,
+          p_address_line1: clean.address_line1,
+          p_address_line2: clean.address_line2 || null,
+          p_landmark: clean.landmark || null,
+          p_state: clean.state,
+          p_postal_code: clean.postal_code,
+          p_country: clean.country,
+          p_phone: clean.phone || null,
+          p_email: clean.email || null,
+          p_is_primary: clean.is_primary,
+        },
+      );
+
+      if (saveError) throw saveError;
+
+      if (!savedId) {
+        throw new Error("The outlet was not saved. Please try again.");
+      }
+
+      const updatedOutlet: Outlet = {
+        id: savedId,
+        ...clean,
+      };
+
+      setOutlets((current) => {
+        const next = editingOutlet
+          ? current.map((outlet) =>
+              outlet.id === savedId ? updatedOutlet : outlet,
+            )
+          : [...current, updatedOutlet];
+
+        if (clean.is_primary) {
+          return next.map((outlet) => ({
+            ...outlet,
+            is_primary: outlet.id === savedId,
+          }));
+        }
+
+        return next;
+      });
+
+      setShowOutletForm(false);
+      setEditingOutlet(null);
+      setSuccess(
+        editingOutlet
+          ? "Outlet updated successfully."
+          : "New outlet added successfully.",
+      );
+
+      router.refresh();
+    } catch (err) {
+      console.error("Restaurant outlet save failed:", err);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Unable to save outlet.",
+      );
+    } finally {
+      setSavingOutlet(false);
+    }
+  }
+
+  return (
+    <section className="mt-8 space-y-6">
+      {(error || success) && (
+        <div
+          role="status"
+          className={`rounded-xl border p-4 text-sm ${
+            error
+              ? "border-danger/30 bg-danger/5 text-danger"
+              : "border-sage/30 bg-sage/10 text-foreground"
+          }`}
+        >
+          {error || success}
+        </div>
+      )}
+
+      {/* BUSINESS PROFILE */}
+
+      <article className="rounded-3xl border border-border bg-surface p-6 sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-sage">
+              Business information
+            </p>
+            <h3 className="mt-2 text-xl font-semibold">
+              Restaurant profile
+            </h3>
+            <p className="mt-2 text-sm text-muted">
+              Manage the business details associated with your Apronly account.
+            </p>
+          </div>
+
+          {canEdit && !editingProfile && (
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                setSuccess("");
+                setEditingProfile(true);
+              }}
+              className="rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-surface-muted"
+            >
+              Edit profile
+            </button>
+          )}
+        </div>
+
+        {editingProfile ? (
+          <form onSubmit={saveProfile} className="mt-7 space-y-5">
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field
+                label="Restaurant name"
+                value={profile.name}
+                onChange={(v) => updateProfile("name", v)}
+                required
+                maxLength={200}
+              />
+              <Field
+                label="Legal business name"
+                value={profile.legalName}
+                onChange={(v) => updateProfile("legalName", v)}
+                maxLength={200}
+              />
+              <Field
+                label="Business email"
+                value={profile.email}
+                onChange={(v) => updateProfile("email", v)}
+                required
+                type="email"
+              />
+              <Field
+                label="Business phone"
+                value={profile.phone}
+                onChange={(v) => updateProfile("phone", v)}
+                required
+              />
+              <Field
+                label="Website"
+                value={profile.website}
+                onChange={(v) => updateProfile("website", v)}
+                placeholder="https://example.com"
+              />
+              <label className="block">
+                <span className={labelClass}>Business category</span>
+                <select
+                  className={inputClass}
+                  value={profile.category}
+                  onChange={(e) => updateProfile("category", e.target.value)}
+                  required
+                >
+                  <option value="">Select category</option>
+                  {categories.map((category) => (
+                    <option key={category} value={category}>
+                      {category}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label className="block">
+              <span className={labelClass}>Business description</span>
+              <textarea
+                className={inputClass}
+                rows={4}
+                maxLength={2000}
+                value={profile.description}
+                onChange={(e) => updateProfile("description", e.target.value)}
+                placeholder="Tell candidates about your restaurant."
+              />
+            </label>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="submit"
+                disabled={savingProfile}
+                className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {savingProfile ? "Saving..." : "Save changes"}
+              </button>
+              <button
+                type="button"
+                disabled={savingProfile}
+                onClick={() => {
+                  setEditingProfile(false);
+                  setProfile({
+                    name: restaurant.name ?? "",
+                    legalName: restaurant.legal_name ?? "",
+                    description: restaurant.description ?? "",
+                    email: restaurant.business_email ?? "",
+                    phone: restaurant.business_phone ?? "",
+                    website: restaurant.website_url ?? "",
+                    category: restaurant.category ?? "",
+                  });
+                  setError("");
+                }}
+                className="rounded-xl border border-border px-5 py-3 text-sm font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="mt-7 grid gap-6 sm:grid-cols-2">
+            {[
+              ["Business name", profile.name],
+              ["Legal name", profile.legalName],
+              ["Business email", profile.email],
+              ["Business phone", profile.phone],
+              ["Website", profile.website],
+              ["Category", profile.category],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <p className="text-xs text-muted">{label}</p>
+                <p className="mt-2 break-words text-sm font-medium">
+                  {value || "Not provided"}
+                </p>
+              </div>
+            ))}
+            <div className="sm:col-span-2">
+              <p className="text-xs text-muted">Description</p>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6">
+                {profile.description || "No description provided."}
+              </p>
+            </div>
+          </div>
+        )}
+      </article>
+
+      {/* OUTLETS */}
+
+      <article className="rounded-3xl border border-border bg-surface p-6 sm:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-sage">
+              Locations
+            </p>
+            <h3 className="mt-2 text-xl font-semibold">
+              Restaurant outlets
+            </h3>
+            <p className="mt-2 text-sm text-muted">
+              Manage the physical locations where your business operates.
+            </p>
+          </div>
+
+          {canEdit && !showOutletForm && (
+            <button
+              type="button"
+              onClick={startNewOutlet}
+              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white"
+            >
+              Add outlet
+            </button>
+          )}
+        </div>
+
+        {outlets.length === 0 && !showOutletForm && (
+          <p className="mt-7 rounded-xl border border-dashed border-border p-6 text-sm text-muted">
+            No outlets found.
+          </p>
+        )}
+
+        <div className="mt-6 space-y-4">
+          {outlets.map((outlet) => (
+            <div
+              key={outlet.id}
+              className="rounded-2xl border border-border p-5"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h4 className="font-semibold">{outlet.name}</h4>
+                    {outlet.is_primary && (
+                      <span className="rounded-full bg-sage/10 px-3 py-1 text-xs font-medium text-sage">
+                        Primary outlet
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-sm text-muted">{outlet.city}</p>
+                </div>
+
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => startEditOutlet(outlet)}
+                    className="rounded-lg border border-border px-3 py-2 text-xs font-medium hover:bg-surface-muted"
+                  >
+                    Edit outlet
+                  </button>
+                )}
+              </div>
+
+              <p className="mt-4 text-sm leading-6">
+                {[outlet.address_line1, outlet.address_line2, outlet.landmark]
+                  .filter(Boolean)
+                  .join(", ") || "Address not completed"}
+              </p>
+
+              <p className="mt-2 text-xs text-muted">
+                {[outlet.state, outlet.postal_code, outlet.country]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+
+              {(outlet.phone || outlet.email) && (
+                <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted">
+                  {outlet.phone && <span>Phone: {outlet.phone}</span>}
+                  {outlet.email && <span>Email: {outlet.email}</span>}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {showOutletForm && (
+          <form
+            onSubmit={saveOutlet}
+            className="mt-7 space-y-5 rounded-2xl border border-border bg-background p-5 sm:p-6"
+          >
+            <div>
+              <h4 className="font-semibold">
+                {editingOutlet ? "Edit outlet" : "Add a new outlet"}
+              </h4>
+              <p className="mt-1 text-xs text-muted">
+                Fields marked with * are required.
+              </p>
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <Field
+                label="Outlet name"
+                value={outletForm.name}
+                onChange={(v) => updateOutlet("name", v)}
+                required
+                maxLength={150}
+              />
+              <Field
+                label="City"
+                value={outletForm.city}
+                onChange={(v) => updateOutlet("city", v)}
+                required
+                maxLength={100}
+              />
+              <div className="sm:col-span-2">
+                <Field
+                  label="Address line 1"
+                  value={outletForm.address_line1}
+                  onChange={(v) => updateOutlet("address_line1", v)}
+                  required
+                  maxLength={300}
+                />
+              </div>
+              <Field
+                label="Address line 2"
+                value={outletForm.address_line2}
+                onChange={(v) => updateOutlet("address_line2", v)}
+                maxLength={300}
+              />
+              <Field
+                label="Landmark"
+                value={outletForm.landmark}
+                onChange={(v) => updateOutlet("landmark", v)}
+                maxLength={150}
+              />
+              <Field
+                label="State"
+                value={outletForm.state}
+                onChange={(v) => updateOutlet("state", v)}
+                required
+                maxLength={100}
+              />
+              <Field
+                label="Postal code"
+                value={outletForm.postal_code}
+                onChange={(v) => updateOutlet("postal_code", v)}
+                required
+                maxLength={20}
+              />
+              <Field
+                label="Country"
+                value={outletForm.country}
+                onChange={(v) => updateOutlet("country", v)}
+                required
+                maxLength={100}
+              />
+              <Field
+                label="Outlet phone"
+                value={outletForm.phone}
+                onChange={(v) => updateOutlet("phone", v)}
+                maxLength={30}
+              />
+              <Field
+                label="Outlet email"
+                value={outletForm.email}
+                onChange={(v) => updateOutlet("email", v)}
+                type="email"
+                maxLength={254}
+              />
+            </div>
+
+            <label className="flex items-center gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={outletForm.is_primary}
+                onChange={(e) =>
+                  updateOutlet("is_primary", e.target.checked)
+                }
+                className="h-4 w-4 accent-current"
+              />
+              Set as primary outlet
+            </label>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="submit"
+                disabled={savingOutlet}
+                className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {savingOutlet ? "Saving..." : "Save outlet"}
+              </button>
+              <button
+                type="button"
+                disabled={savingOutlet}
+                onClick={() => {
+                  setShowOutletForm(false);
+                  setEditingOutlet(null);
+                  setError("");
+                }}
+                className="rounded-xl border border-border px-5 py-3 text-sm font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+      </article>
+    </section>
+  );
+}
+
+
+==============================
+FILE: src/app/partner/hiring-management.tsx
+==============================
+
+
+"use client";
+
+import { useEffect, useState } from "react";
+
+import { useRouter } from "next/navigation";
+
+import { createClient } from "@/lib/supabase/client";
+
+type HiringRequest = {
+
+  id: string;
+
+  restaurant_id: string;
+
+  title: string;
+
+  department: string;
+
+  openings: number;
+
+  description: string;
+
+  responsibilities: string | null;
+
+  minimum_experience_years: number | null;
+
+  maximum_experience_years: number | null;
+
+  required_skills: string[];
+
+  employment_type: string;
+
+  shift_type: string;
+
+  minimum_salary: number | null;
+
+  maximum_salary: number | null;
+
+  salary_currency: string;
+
+  salary_period: string | null;
+
+  city: string;
+
+  joining_timeline: string;
+
+  status: string;
+
+  created_at: string;
+
+};
+
+type Props = {
+
+  restaurantId: string;
+
+};
+
+type FormState = {
+
+  title: string;
+
+  department: string;
+
+  openings: string;
+
+  description: string;
+
+  responsibilities: string;
+
+  minimumExperience: string;
+
+  maximumExperience: string;
+
+  skills: string;
+
+  employmentType: string;
+
+  shiftType: string;
+
+  minimumSalary: string;
+
+  maximumSalary: string;
+
+  salaryPeriod: string;
+
+  city: string;
+
+  joiningTimeline: string;
+
+};
+
+const emptyForm: FormState = {
+
+  title: "",
+
+  department: "",
+
+  openings: "1",
+
+  description: "",
+
+  responsibilities: "",
+
+  minimumExperience: "",
+
+  maximumExperience: "",
+
+  skills: "",
+
+  employmentType: "full_time",
+
+  shiftType: "rotational",
+
+  minimumSalary: "",
+
+  maximumSalary: "",
+
+  salaryPeriod: "monthly",
+
+  city: "",
+
+  joiningTimeline: "immediate",
+
+};
+
+const inputClass =
+
+  "w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-accent";
+
+const labelClass = "mb-2 block text-sm font-medium";
+
+function Field({
+
+  label,
+
+  value,
+
+  onChange,
+
+  type = "text",
+
+  required = false,
+
+  placeholder,
+
+}: {
+
+  label: string;
+
+  value: string;
+
+  onChange: (value: string) => void;
+
+  type?: string;
+
+  required?: boolean;
+
+  placeholder?: string;
+
+}) {
+
+  return (
+
+    <label className="block">
+
+      <span className={labelClass}>
+
+        {label}
+
+        {required && <span className="ml-1 text-danger">*</span>}
+
+      </span>
+
+      <input
+
+        className={inputClass}
+
+        type={type}
+
+        value={value}
+
+        onChange={(e) => onChange(e.target.value)}
+
+        required={required}
+
+        placeholder={placeholder}
+
+      />
+
+    </label>
+
+  );
+
+}
+
+function SelectField({
+
+  label,
+
+  value,
+
+  onChange,
+
+  options,
+
+}: {
+
+  label: string;
+
+  value: string;
+
+  onChange: (value: string) => void;
+
+  options: { value: string; label: string }[];
+
+}) {
+
+  return (
+
+    <label className="block">
+
+      <span className={labelClass}>{label}</span>
+
+      <select
+
+        className={inputClass}
+
+        value={value}
+
+        onChange={(e) => onChange(e.target.value)}
+
+      >
+
+        {options.map((option) => (
+
+          <option key={option.value} value={option.value}>
+
+            {option.label}
+
+          </option>
+
+        ))}
+
+      </select>
+
+    </label>
+
+  );
+
+}
+
+function formatStatus(status: string) {
+
+  return status.replaceAll("_", " ");
+
+}
+
+function statusStyle(status: string) {
+
+  if (status === "approved") return "bg-sage/10 text-sage";
+
+  if (status === "rejected") return "bg-danger/10 text-danger";
+
+  if (status === "changes_requested") return "bg-accent/10 text-accent";
+
+  return "bg-surface-muted text-muted";
+
+}
+
+export default function HiringManagement({ restaurantId }: Props) {
+
+  const router = useRouter();
+
+  const [requests, setRequests] = useState<HiringRequest[]>([]);
+
+  const [form, setForm] = useState<FormState>(emptyForm);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const isEditingPendingReview = requests.some((request) => request.id === editingId && request.status === "pending_review");
+
+  const [showForm, setShowForm] = useState(false);
+
+  const [submitting, setSubmitting] = useState(false);
+
+  const [loading, setLoading] = useState(true);
+
+  const [error, setError] = useState("");
+
+  const [success, setSuccess] = useState("");
+
+  const update = (key: keyof FormState, value: string) => {
+
+    setForm((current) => ({ ...current, [key]: value }));
+
+  };
+
+  async function refreshRequests() {
+    try {
+      const supabase = createClient();
+      const { data, error: queryError } = await supabase
+        .from("restaurant_hiring_requests")
+        .select("*")
+        .eq("restaurant_id", restaurantId)
+        .order("created_at", { ascending: false });
+
+      if (queryError) throw queryError;
+      setRequests((data ?? []) as HiringRequest[]);
+    } catch (err) {
+      console.error("Hiring requests lookup failed:", err);
+      setError(
+        err instanceof Error ? err.message : "Unable to load hiring requests."
+      );
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+
+    async function fetchInitialRequests() {
+      try {
+        const supabase = createClient();
+        const { data, error: queryError } = await supabase
+          .from("restaurant_hiring_requests")
+          .select("*")
+          .eq("restaurant_id", restaurantId)
+          .order("created_at", { ascending: false });
+
+        if (queryError) throw queryError;
+        if (active) setRequests((data ?? []) as HiringRequest[]);
+      } catch (err) {
+        console.error("Hiring requests lookup failed:", err);
+        if (active) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load hiring requests."
+          );
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void fetchInitialRequests();
+
+    return () => {
+      active = false;
+    };
+  }, [restaurantId]);
+
+  function startNewRequest() {
+
+    setForm(emptyForm);
+
+    setEditingId(null);
+
+    setError("");
+
+    setSuccess("");
+
+    setShowForm(true);
+
+  }
+
+  function startEdit(request: HiringRequest) {
+
+    if (!["draft", "changes_requested", "pending_review"].includes(request.status)) return;
+
+    setForm({
+
+      title: request.title,
+
+      department: request.department,
+
+      openings: String(request.openings),
+
+      description: request.description,
+
+      responsibilities: request.responsibilities ?? "",
+
+      minimumExperience:
+
+        request.minimum_experience_years?.toString() ?? "",
+
+      maximumExperience:
+
+        request.maximum_experience_years?.toString() ?? "",
+
+      skills: (request.required_skills ?? []).join(", "),
+
+      employmentType: request.employment_type,
+
+      shiftType: request.shift_type,
+
+      minimumSalary: request.minimum_salary?.toString() ?? "",
+
+      maximumSalary: request.maximum_salary?.toString() ?? "",
+
+      salaryPeriod: request.salary_period ?? "monthly",
+
+      city: request.city,
+
+      joiningTimeline: request.joining_timeline,
+
+    });
+
+    setEditingId(request.id);
+
+    setError("");
+
+    setSuccess("");
+
+    setShowForm(true);
+
+  }
+
+  async function saveRequest(submit: boolean) {
+
+        const isPendingReviewEdit = requests.some(
+          (request) => request.id === editingId && request.status === "pending_review"
+        );
+
+        setError("");
+
+    setSuccess("");
+
+    if (submitting) return;
+
+    const clean = {
+
+      title: form.title.trim(),
+
+      department: form.department.trim(),
+
+      openings: Number(form.openings),
+
+      description: form.description.trim(),
+
+      responsibilities: form.responsibilities.trim(),
+
+      minimumExperience: form.minimumExperience.trim(),
+
+      maximumExperience: form.maximumExperience.trim(),
+
+      skills: form.skills
+
+        .split(/[,\n]/)
+
+        .map((skill) => skill.trim())
+
+        .filter(Boolean),
+
+      minimumSalary: form.minimumSalary.trim(),
+
+      maximumSalary: form.maximumSalary.trim(),
+
+      city: form.city.trim(),
+
+    };
+
+    if (
+
+      clean.title.length < 2 ||
+
+      clean.department.length < 2 ||
+
+      clean.city.length < 2
+
+    ) {
+
+      setError("Enter a valid role title, department and city.");
+
+      return;
+
+    }
+
+    if (
+
+      !Number.isInteger(clean.openings) ||
+
+      clean.openings < 1 ||
+
+      clean.openings > 500
+
+    ) {
+
+      setError("Openings must be between 1 and 500.");
+
+      return;
+
+    }
+
+    if (clean.description.length < 20) {
+
+      setError("The job description must contain at least 20 characters.");
+
+      return;
+
+    }
+
+    if (clean.skills.length > 30) {
+
+      setError("You can add a maximum of 30 skills.");
+
+      return;
+
+    }
+
+    const minExperience =
+
+      clean.minimumExperience === ""
+
+        ? null
+
+        : Number(clean.minimumExperience);
+
+    const maxExperience =
+
+      clean.maximumExperience === ""
+
+        ? null
+
+        : Number(clean.maximumExperience);
+
+    if (
+
+      (minExperience !== null &&
+
+        (!Number.isFinite(minExperience) || minExperience < 0)) ||
+
+      (maxExperience !== null &&
+
+        (!Number.isFinite(maxExperience) || maxExperience < 0)) ||
+
+      (minExperience !== null &&
+
+        maxExperience !== null &&
+
+        maxExperience < minExperience)
+
+    ) {
+
+      setError("Check the minimum and maximum experience values.");
+
+      return;
+
+    }
+
+    const minSalary =
+
+      clean.minimumSalary === "" ? null : Number(clean.minimumSalary);
+
+    const maxSalary =
+
+      clean.maximumSalary === "" ? null : Number(clean.maximumSalary);
+
+    if (
+
+      (minSalary === null) !== (maxSalary === null) ||
+
+      (minSalary !== null &&
+
+        (!Number.isFinite(minSalary) || minSalary < 0)) ||
+
+      (maxSalary !== null &&
+
+        (!Number.isFinite(maxSalary) || maxSalary < 0)) ||
+
+      (minSalary !== null &&
+
+        maxSalary !== null &&
+
+        maxSalary < minSalary)
+
+    ) {
+
+      setError("Enter both salary limits and ensure the maximum is not lower.");
+
+      return;
+
+    }
+
+    setSubmitting(true);
+
+    try {
+
+      const supabase = createClient();
+
+      const { data, error: saveError } = await supabase.rpc(
+
+        "save_restaurant_hiring_request",
+
+        {
+
+          p_request_id: editingId,
+
+          p_restaurant_id: restaurantId,
+
+          p_title: clean.title,
+
+          p_department: clean.department,
+
+          p_openings: clean.openings,
+
+          p_description: clean.description,
+
+          p_responsibilities: clean.responsibilities || null,
+
+          p_minimum_experience_years: minExperience,
+
+          p_maximum_experience_years: maxExperience,
+
+          p_required_skills: clean.skills,
+
+          p_employment_type: form.employmentType,
+
+          p_shift_type: form.shiftType,
+
+          p_minimum_salary: minSalary,
+
+          p_maximum_salary: maxSalary,
+
+          p_salary_currency: "INR",
+
+          p_salary_period: minSalary === null ? null : form.salaryPeriod,
+
+          p_city: clean.city,
+
+          p_joining_timeline: form.joiningTimeline,
+
+          p_submit: isPendingReviewEdit ? true : submit,
+
+        }
+
+      );
+
+      if (saveError) throw saveError;
+
+      if (!data) throw new Error("The hiring request was not saved.");
+
+      setShowForm(false);
+
+      setEditingId(null);
+
+      setForm(emptyForm);
+
+      setSuccess(
+
+        isPendingReviewEdit
+          ? "Changes saved. Your hiring request remains pending Apronly review."
+          : submit
+            ? "Hiring request submitted to Apronly for review."
+            : "Hiring request saved as a draft."
+
+      );
+
+      await refreshRequests();
+
+      router.refresh();
+
+    } catch (err) {
+
+      console.error("Hiring request save failed:", err);
+
+      setError(
+
+        err instanceof Error
+
+          ? err.message
+
+          : "Unable to save the hiring request."
+
+      );
+
+    } finally {
+
+      setSubmitting(false);
+
+    }
+
+  }
+
+  return (
+
+    <section className="mt-8 space-y-6">
+
+      {(error || success) && (
+
+        <div
+
+          role="status"
+
+          className={`rounded-xl border p-4 text-sm ${
+
+            error
+
+              ? "border-danger/30 bg-danger/5 text-danger"
+
+              : "border-sage/30 bg-sage/10 text-foreground"
+
+          }`}
+
+        >
+
+          {error || success}
+
+        </div>
+
+      )}
+
+      <article className="rounded-3xl border border-border bg-surface p-6 sm:p-8">
+
+        <div className="flex flex-wrap items-start justify-between gap-4">
+
+          <div>
+
+            <p className="text-xs font-semibold uppercase tracking-wider text-sage">
+
+              Recruitment
+
+            </p>
+
+            <h3 className="mt-2 text-xl font-semibold">
+
+              Hiring requirements
+
+            </h3>
+
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
+
+              Tell Apronly which roles you need to fill. Every request is
+
+              reviewed before it can become a public job listing.
+
+            </p>
+
+          </div>
+
+          {!showForm && (
+
+            <button
+
+              type="button"
+
+              onClick={startNewRequest}
+
+              className="rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white"
+
+            >
+
+              Create requirement
+
+            </button>
+
+          )}
+
+        </div>
+
+        {showForm && (
+
+          <div className="mt-7 space-y-6 border-t border-border pt-7">
+
+            <div>
+
+              <h4 className="font-semibold">
+
+                {editingId ? "Edit hiring requirement" : "New hiring requirement"}
+
+              </h4>
+
+              <p className="mt-1 text-xs text-muted">
+
+                Fields marked with * are required.
+
+              </p>
+
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+
+              <Field
+
+                label="Role / job title"
+
+                value={form.title}
+
+                onChange={(v) => update("title", v)}
+
+                required
+
+                placeholder="e.g. Head Chef"
+
+              />
+
+              <Field
+
+                label="Department"
+
+                value={form.department}
+
+                onChange={(v) => update("department", v)}
+
+                required
+
+                placeholder="e.g. Kitchen"
+
+              />
+
+              <Field
+
+                label="Number of openings"
+
+                type="number"
+
+                value={form.openings}
+
+                onChange={(v) => update("openings", v)}
+
+                required
+
+              />
+
+              <Field
+
+                label="Hiring city"
+
+                value={form.city}
+
+                onChange={(v) => update("city", v)}
+
+                required
+
+                placeholder="e.g. Hyderabad"
+
+              />
+
+              <Field
+
+                label="Minimum experience (years)"
+
+                type="number"
+
+                value={form.minimumExperience}
+
+                onChange={(v) => update("minimumExperience", v)}
+
+                placeholder="e.g. 1"
+
+              />
+
+              <Field
+
+                label="Maximum experience (years)"
+
+                type="number"
+
+                value={form.maximumExperience}
+
+                onChange={(v) => update("maximumExperience", v)}
+
+                placeholder="e.g. 5"
+
+              />
+
+              <SelectField
+
+                label="Employment type"
+
+                value={form.employmentType}
+
+                onChange={(v) => update("employmentType", v)}
+
+                options={[
+
+                  { value: "full_time", label: "Full time" },
+
+                  { value: "part_time", label: "Part time" },
+
+                  { value: "contract", label: "Contract" },
+
+                  { value: "temporary", label: "Temporary" },
+
+                  { value: "internship", label: "Internship" },
+
+                ]}
+
+              />
+
+              <SelectField
+
+                label="Shift"
+
+                value={form.shiftType}
+
+                onChange={(v) => update("shiftType", v)}
+
+                options={[
+
+                  { value: "day", label: "Day" },
+
+                  { value: "night", label: "Night" },
+
+                  { value: "rotational", label: "Rotational" },
+
+                  { value: "flexible", label: "Flexible" },
+
+                ]}
+
+              />
+
+              <Field
+
+                label="Minimum salary (₹)"
+
+                type="number"
+
+                value={form.minimumSalary}
+
+                onChange={(v) => update("minimumSalary", v)}
+
+                placeholder="e.g. 15000"
+
+              />
+
+              <Field
+
+                label="Maximum salary (₹)"
+
+                type="number"
+
+                value={form.maximumSalary}
+
+                onChange={(v) => update("maximumSalary", v)}
+
+                placeholder="e.g. 25000"
+
+              />
+
+              <SelectField
+
+                label="Salary period"
+
+                value={form.salaryPeriod}
+
+                onChange={(v) => update("salaryPeriod", v)}
+
+                options={[
+
+                  { value: "hourly", label: "Hourly" },
+
+                  { value: "daily", label: "Daily" },
+
+                  { value: "weekly", label: "Weekly" },
+
+                  { value: "monthly", label: "Monthly" },
+
+                  { value: "yearly", label: "Yearly" },
+
+                ]}
+
+              />
+
+              <SelectField
+
+                label="Joining timeline"
+
+                value={form.joiningTimeline}
+
+                onChange={(v) => update("joiningTimeline", v)}
+
+                options={[
+
+                  { value: "immediate", label: "Immediate" },
+
+                  { value: "within_15_days", label: "Within 15 days" },
+
+                  { value: "within_30_days", label: "Within 30 days" },
+
+                  { value: "within_60_days", label: "Within 60 days" },
+
+                  { value: "flexible", label: "Flexible" },
+
+                ]}
+
+              />
+
+            </div>
+
+            <label className="block">
+
+              <span className={labelClass}>Required skills</span>
+
+              <textarea
+
+                className={inputClass}
+
+                rows={3}
+
+                value={form.skills}
+
+                onChange={(e) => update("skills", e.target.value)}
+
+                placeholder="Food preparation, inventory management, team leadership"
+
+              />
+
+              <span className="mt-1 block text-xs text-muted">
+
+                Separate skills with commas.
+
+              </span>
+
+            </label>
+
+            <label className="block">
+
+              <span className={labelClass}>Job description *</span>
+
+              <textarea
+
+                className={inputClass}
+
+                rows={5}
+
+                maxLength={5000}
+
+                value={form.description}
+
+                onChange={(e) => update("description", e.target.value)}
+
+                placeholder="Describe the role, work environment and expectations."
+
+              />
+
+            </label>
+
+            <label className="block">
+
+              <span className={labelClass}>Responsibilities</span>
+
+              <textarea
+
+                className={inputClass}
+
+                rows={4}
+
+                maxLength={5000}
+
+                value={form.responsibilities}
+
+                onChange={(e) => update("responsibilities", e.target.value)}
+
+                placeholder="List the main responsibilities."
+
+              />
+
+            </label>
+
+            <div className="flex flex-wrap gap-3">
+
+              {isEditingPendingReview ? (
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => void saveRequest(true)}
+                  className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                >
+                  {submitting ? "Saving..." : "Save changes for review"}
+                </button>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => void saveRequest(false)}
+                    className="rounded-xl border border-border px-5 py-3 text-sm font-semibold disabled:opacity-60"
+                  >
+                    {submitting ? "Saving..." : "Save draft"}
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => void saveRequest(true)}
+                    className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+                  >
+                    {submitting ? "Submitting..." : "Submit for review"}
+                  </button>
+                </>
+              )}
+
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => {
+                  setShowForm(false);
+                  setEditingId(null);
+                  setError("");
+                }}
+                className="rounded-xl px-5 py-3 text-sm font-medium text-muted hover:bg-surface-muted"
+              >
+                Cancel
+              </button>
+
+            </div>
+
+          </div>
+
+        )}
+
+        <div className="mt-7 border-t border-border pt-6">
+
+          <h4 className="font-semibold">Your hiring requests</h4>
+
+          {loading ? (
+
+            <p className="mt-4 text-sm text-muted">Loading requirements...</p>
+
+          ) : requests.length === 0 ? (
+
+            <p className="mt-4 rounded-xl border border-dashed border-border p-6 text-sm text-muted">
+
+              No hiring requirements yet. Create your first requirement to
+
+              start the recruitment process.
+
+            </p>
+
+          ) : (
+
+            <div className="mt-5 space-y-4">
+
+              {requests.map((request) => (
+
+                <div
+
+                  key={request.id}
+
+                  className="rounded-2xl border border-border p-5"
+
+                >
+
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+
+                    <div>
+
+                      <h5 className="font-semibold">{request.title}</h5>
+
+                      <p className="mt-1 text-sm text-muted">
+
+                        {request.department} · {request.city} ·{" "}
+
+                        {request.openings} opening(s)
+
+                      </p>
+
+                    </div>
+
+                    <span
+
+                      className={`rounded-full px-3 py-1 text-xs font-semibold capitalize ${statusStyle(request.status)}`}
+
+                    >
+
+                      {formatStatus(request.status)}
+
+                    </span>
+
+                  </div>
+
+                  <p className="mt-3 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-muted">
+
+                    {request.description}
+
+                  </p>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+
+                    <p className="text-xs text-muted">
+
+                      Created{" "}
+
+                      {new Date(request.created_at).toLocaleDateString("en-IN")}
+
+                    </p>
+
+                    {["draft", "changes_requested", "pending_review"].includes(request.status) && (
+
+                      <button
+
+                        type="button"
+
+                        onClick={() => startEdit(request)}
+
+                        className="rounded-lg border border-border px-3 py-2 text-xs font-semibold hover:bg-surface-muted"
+
+                      >
+
+                        Edit requirement
+
+                      </button>
+
+                    )}
+
+                  </div>
+
+                </div>
+
+              ))}
+
+            </div>
+
+          )}
+
+        </div>
+
+      </article>
+
+    </section>
+
+  );
+
+}
+
+
+
+
+
+==============================
+FILE: src/app/partner/edit/page.tsx
+==============================
+import { Suspense } from "react";
+import { connection } from "next/server";
+import { redirect } from "next/navigation";
+import { requireAnyRole } from "@/lib/auth/authorization";
+import { createClient } from "@/lib/supabase/server";
+import RestaurantApplicationForm from "@/app/onboarding/restaurant/restaurant-application-form";
+
+async function EditRestaurantApplicationContent() {
+  await connection();
+
+  const access = await requireAnyRole(["restaurant_staff"]);
+  const supabase = await createClient();
+
+  const { data: membership, error: membershipError } = await supabase
+    .from("restaurant_memberships")
+    .select("restaurant_id, role, status")
+    .eq("user_id", access.userId)
+    .eq("role", "owner")
+    .eq("status", "active")
+    .limit(1)
+    .maybeSingle();
+
+  if (membershipError || !membership) {
+    redirect("/partner");
+  }
+
+  const { data: restaurant, error: restaurantError } = await supabase
+    .from("restaurants")
+    .select(
+      "id, name, legal_name, description, business_email, business_phone, website_url, category, status, verification_status"
+    )
+    .eq("id", membership.restaurant_id)
+    .maybeSingle();
+
+  if (
+    restaurantError ||
+    !restaurant ||
+    restaurant.status !== "pending" ||
+    restaurant.verification_status !== "unverified"
+  ) {
+    redirect("/partner");
+  }
+
+  const { data: outlet, error: outletError } = await supabase
+    .from("restaurant_outlets")
+    .select(
+      "name, address_line1, address_line2, landmark, city, state, postal_code, country, phone, email"
+    )
+    .eq("restaurant_id", restaurant.id)
+    .eq("is_primary", true)
+    .maybeSingle();
+
+  if (outletError || !outlet) {
+    redirect("/partner");
+  }
+
+  return (
+    <RestaurantApplicationForm
+      isEditing
+      initialValues={{
+        name: restaurant.name ?? "",
+        legalName: restaurant.legal_name ?? "",
+        description: restaurant.description ?? "",
+        businessEmail: restaurant.business_email ?? "",
+        businessPhone: restaurant.business_phone ?? "",
+        websiteUrl: restaurant.website_url ?? "",
+        category: restaurant.category ?? "",
+        outletName: outlet.name ?? "",
+        addressLine1: outlet.address_line1 ?? "",
+        addressLine2: outlet.address_line2 ?? "",
+        landmark: outlet.landmark ?? "",
+        city: outlet.city ?? "",
+        state: outlet.state ?? "",
+        postalCode: outlet.postal_code ?? "",
+        country: outlet.country ?? "India",
+        outletPhone: outlet.phone ?? "",
+        outletEmail: outlet.email ?? "",
+      }}
+    />
+  );
+}
+
+export default function EditRestaurantApplicationPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-background">
+          <p className="text-sm text-muted">Loading your application...</p>
+        </main>
+      }
+    >
+      <EditRestaurantApplicationContent />
+    </Suspense>
+  );
+}
+
+
+
+==============================
+FILE: src/app/globals.css
+==============================
+
+@import "tailwindcss";
+
+:root {
+  --background: #F6F2EA;
+  --foreground: #22241F;
+
+  --surface: #FFFFFF;
+  --surface-muted: #F0ECE3;
+
+  --primary: #22241F;
+  --primary-foreground: #FFFFFF;
+
+  --accent: #D99555;
+  --accent-muted: #F3E3D2;
+
+  --sage: #7D8873;
+  --border: #E5E0D6;
+
+  --muted: #77766F;
+  --danger: #B84C42;
+  --success: #52745A;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-muted: var(--accent-muted);
+  --color-sage: var(--sage);
+
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+
+  --font-sans: var(--font-manrope);
+  --font-serif: var(--font-cormorant);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-height: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-manrope), sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-cormorant), Georgia, serif;
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+input,
+textarea,
+select {
+  font-family: var(--font-manrope), sans-serif;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: var(--accent-muted);
+  color: var(--foreground);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+
+
+==============================
+FILE: src/app/layout.tsx
+==============================
+
+import type { Metadata } from "next";
+import {
+  Manrope,
+  Cormorant_Garamond,
+  Geist_Mono,
+} from "next/font/google";
+
+import "./globals.css";
+
+const manrope = Manrope({
+  variable: "--font-manrope",
+  subsets: ["latin"],
+  display: "swap",
+});
+
+const cormorant = Cormorant_Garamond({
+  variable: "--font-cormorant",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
+
+const geistMono = Geist_Mono({
+  variable: "--font-geist-mono",
+  subsets: ["latin"],
+  display: "swap",
+});
+
+export const metadata: Metadata = {
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000"
+  ),
+  title: {
+    default: "Apronly | Hospitality Careers & Recruitment",
+    template: "%s | Apronly",
+  },
+  description:
+    "A managed hospitality recruitment platform connecting talented professionals with hospitality businesses.",
+  applicationName: "Apronly",
+  robots: {
+    index: false,
+    follow: false,
+  },
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+      lang="en"
+      className={`${manrope.variable} ${cormorant.variable} ${geistMono.variable}`}
+    >
+      <body className="min-h-screen flex flex-col font-sans">
+        {children}
+      </body>
+    </html>
+  );
+}
+

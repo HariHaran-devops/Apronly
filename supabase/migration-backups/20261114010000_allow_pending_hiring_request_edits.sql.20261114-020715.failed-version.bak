@@ -1,0 +1,104 @@
+﻿begin;
+
+do $migration$
+declare
+  v_definition text;
+  v_pattern text;
+  v_replacement text;
+  v_count integer;
+begin
+  v_definition := pg_get_functiondef(
+    'public.save_restaurant_hiring_request(uuid,uuid,text,text,integer,text,text,numeric,numeric,text[],text,text,numeric,numeric,text,text,text,text,boolean)'::regprocedure
+  );
+
+  -- 1. Permit pending-review edits.
+  v_pattern := $pattern$
+    if[[:space:]]+existing_status[[:space:]]+not[[:space:]]+in[[:space:]]*\(
+    [[:space:]]*'draft'::public\.hiring_request_status[[:space:]]*,
+    [[:space:]]*'changes_requested'::public\.hiring_request_status[[:space:]]*
+    \)[[:space:]]+then
+  $pattern$;
+
+  select count(*) into v_count
+  from regexp_matches(v_definition, v_pattern, 'g');
+
+  if v_count <> 1 then
+    raise exception 'Expected exactly one edit-status guard; found %', v_count;
+  end if;
+
+  v_replacement := $replacement$
+    if existing_status not in (
+      'draft'::public.hiring_request_status,
+      'changes_requested'::public.hiring_request_status,
+      'pending_review'::public.hiring_request_status
+    ) then
+  $replacement$;
+
+  v_definition := regexp_replace(
+    v_definition, v_pattern, v_replacement, 'g'
+  );
+
+  -- 2. Preserve pending_review after an edit.
+  v_pattern := $pattern$
+    (if[[:space:]]+not[[:space:]]+found[[:space:]]+then
+    [[:space:]]+raise[[:space:]]+exception[[:space:]]+'Hiring request not found';
+    [[:space:]]+end[[:space:]]+if;)
+  $pattern$;
+
+  select count(*) into v_count
+  from regexp_matches(v_definition, v_pattern, 'g');
+
+  if v_count <> 1 then
+    raise exception 'Expected exactly one hiring-request not-found guard; found %', v_count;
+  end if;
+
+  v_definition := regexp_replace(
+    v_definition,
+    v_pattern,
+    E'\\1\n\n    if existing_status = ''pending_review''::public.hiring_request_status then\n      next_status := ''pending_review''::public.hiring_request_status;\n    end if;',
+    'g'
+  );
+
+  -- 3. Distinguish an edit during review from a first submission.
+  v_pattern := $pattern$
+    case[[:space:]]+
+      when[[:space:]]+next_status[[:space:]]*=[[:space:]]*'pending_review'
+      [[:space:]]+then[[:space:]]+'restaurant_hiring_request_submitted'
+      [[:space:]]+else[[:space:]]+'restaurant_hiring_request_saved'
+    [[:space:]]+end
+  $pattern$;
+
+  select count(*) into v_count
+  from regexp_matches(v_definition, v_pattern, 'g');
+
+  if v_count <> 1 then
+    raise exception 'Expected exactly one audit action case; found %', v_count;
+  end if;
+
+  v_replacement := $replacement$
+    case
+      when existing_status = 'pending_review'
+        then 'restaurant_hiring_request_updated_during_review'
+      when next_status = 'pending_review'
+        then 'restaurant_hiring_request_submitted'
+      else 'restaurant_hiring_request_saved'
+    end
+  $replacement$;
+
+  v_definition := regexp_replace(
+    v_definition, v_pattern, v_replacement, 'g'
+  );
+
+  execute v_definition;
+end;
+$migration$;
+
+comment on function public.save_restaurant_hiring_request(
+  uuid, uuid, text, text, integer, text, text,
+  numeric, numeric, text[], text, text,
+  numeric, numeric, text, text, text, text, boolean
+) is
+'Creates or updates a hiring request for an active verified restaurant through an authorized active member. Draft and changes-requested requests may be saved or submitted. Pending-review requests may be edited but remain pending review, with edits audited separately.';
+
+commit;
+

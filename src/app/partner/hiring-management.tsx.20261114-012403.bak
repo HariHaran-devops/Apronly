@@ -1,0 +1,1233 @@
+
+
+"use client";
+
+import { useEffect, useState } from "react";
+
+import { useRouter } from "next/navigation";
+
+import { createClient } from "@/lib/supabase/client";
+
+type HiringRequest = {
+
+  id: string;
+
+  restaurant_id: string;
+
+  title: string;
+
+  department: string;
+
+  openings: number;
+
+  description: string;
+
+  responsibilities: string | null;
+
+  minimum_experience_years: number | null;
+
+  maximum_experience_years: number | null;
+
+  required_skills: string[];
+
+  employment_type: string;
+
+  shift_type: string;
+
+  minimum_salary: number | null;
+
+  maximum_salary: number | null;
+
+  salary_currency: string;
+
+  salary_period: string | null;
+
+  city: string;
+
+  joining_timeline: string;
+
+  status: string;
+
+  created_at: string;
+
+};
+
+type Props = {
+
+  restaurantId: string;
+
+};
+
+type FormState = {
+
+  title: string;
+
+  department: string;
+
+  openings: string;
+
+  description: string;
+
+  responsibilities: string;
+
+  minimumExperience: string;
+
+  maximumExperience: string;
+
+  skills: string;
+
+  employmentType: string;
+
+  shiftType: string;
+
+  minimumSalary: string;
+
+  maximumSalary: string;
+
+  salaryPeriod: string;
+
+  city: string;
+
+  joiningTimeline: string;
+
+};
+
+const emptyForm: FormState = {
+
+  title: "",
+
+  department: "",
+
+  openings: "1",
+
+  description: "",
+
+  responsibilities: "",
+
+  minimumExperience: "",
+
+  maximumExperience: "",
+
+  skills: "",
+
+  employmentType: "full_time",
+
+  shiftType: "rotational",
+
+  minimumSalary: "",
+
+  maximumSalary: "",
+
+  salaryPeriod: "monthly",
+
+  city: "",
+
+  joiningTimeline: "immediate",
+
+};
+
+const inputClass =
+
+  "w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-accent";
+
+const labelClass = "mb-2 block text-sm font-medium";
+
+function Field({
+
+  label,
+
+  value,
+
+  onChange,
+
+  type = "text",
+
+  required = false,
+
+  placeholder,
+
+}: {
+
+  label: string;
+
+  value: string;
+
+  onChange: (value: string) => void;
+
+  type?: string;
+
+  required?: boolean;
+
+  placeholder?: string;
+
+}) {
+
+  return (
+
+    <label className="block">
+
+      <span className={labelClass}>
+
+        {label}
+
+        {required && <span className="ml-1 text-danger">*</span>}
+
+      </span>
+
+      <input
+
+        className={inputClass}
+
+        type={type}
+
+        value={value}
+
+        onChange={(e) => onChange(e.target.value)}
+
+        required={required}
+
+        placeholder={placeholder}
+
+      />
+
+    </label>
+
+  );
+
+}
+
+function SelectField({
+
+  label,
+
+  value,
+
+  onChange,
+
+  options,
+
+}: {
+
+  label: string;
+
+  value: string;
+
+  onChange: (value: string) => void;
+
+  options: { value: string; label: string }[];
+
+}) {
+
+  return (
+
+    <label className="block">
+
+      <span className={labelClass}>{label}</span>
+
+      <select
+
+        className={inputClass}
+
+        value={value}
+
+        onChange={(e) => onChange(e.target.value)}
+
+      >
+
+        {options.map((option) => (
+
+          <option key={option.value} value={option.value}>
+
+            {option.label}
+
+          </option>
+
+        ))}
+
+      </select>
+
+    </label>
+
+  );
+
+}
+
+function formatStatus(status: string) {
+
+  return status.replaceAll("_", " ");
+
+}
+
+function statusStyle(status: string) {
+
+  if (status === "approved") return "bg-sage/10 text-sage";
+
+  if (status === "rejected") return "bg-danger/10 text-danger";
+
+  if (status === "changes_requested") return "bg-accent/10 text-accent";
+
+  return "bg-surface-muted text-muted";
+
+}
+
+export default function HiringManagement({ restaurantId }: Props) {
+
+  const router = useRouter();
+
+  const [requests, setRequests] = useState<HiringRequest[]>([]);
+
+  const [form, setForm] = useState<FormState>(emptyForm);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+
+  const [showForm, setShowForm] = useState(false);
+
+  const [submitting, setSubmitting] = useState(false);
+
+  const [loading, setLoading] = useState(true);
+
+  const [error, setError] = useState("");
+
+  const [success, setSuccess] = useState("");
+
+  const update = (key: keyof FormState, value: string) => {
+
+    setForm((current) => ({ ...current, [key]: value }));
+
+  };
+
+  async function refreshRequests() {
+    try {
+      const supabase = createClient();
+      const { data, error: queryError } = await supabase
+        .from("restaurant_hiring_requests")
+        .select("*")
+        .eq("restaurant_id", restaurantId)
+        .order("created_at", { ascending: false });
+
+      if (queryError) throw queryError;
+      setRequests((data ?? []) as HiringRequest[]);
+    } catch (err) {
+      console.error("Hiring requests lookup failed:", err);
+      setError(
+        err instanceof Error ? err.message : "Unable to load hiring requests."
+      );
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+
+    async function fetchInitialRequests() {
+      try {
+        const supabase = createClient();
+        const { data, error: queryError } = await supabase
+          .from("restaurant_hiring_requests")
+          .select("*")
+          .eq("restaurant_id", restaurantId)
+          .order("created_at", { ascending: false });
+
+        if (queryError) throw queryError;
+        if (active) setRequests((data ?? []) as HiringRequest[]);
+      } catch (err) {
+        console.error("Hiring requests lookup failed:", err);
+        if (active) {
+          setError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load hiring requests."
+          );
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void fetchInitialRequests();
+
+    return () => {
+      active = false;
+    };
+  }, [restaurantId]);
+
+  function startNewRequest() {
+
+    setForm(emptyForm);
+
+    setEditingId(null);
+
+    setError("");
+
+    setSuccess("");
+
+    setShowForm(true);
+
+  }
+
+  function startEdit(request: HiringRequest) {
+
+    if (!["draft", "changes_requested"].includes(request.status)) return;
+
+    setForm({
+
+      title: request.title,
+
+      department: request.department,
+
+      openings: String(request.openings),
+
+      description: request.description,
+
+      responsibilities: request.responsibilities ?? "",
+
+      minimumExperience:
+
+        request.minimum_experience_years?.toString() ?? "",
+
+      maximumExperience:
+
+        request.maximum_experience_years?.toString() ?? "",
+
+      skills: (request.required_skills ?? []).join(", "),
+
+      employmentType: request.employment_type,
+
+      shiftType: request.shift_type,
+
+      minimumSalary: request.minimum_salary?.toString() ?? "",
+
+      maximumSalary: request.maximum_salary?.toString() ?? "",
+
+      salaryPeriod: request.salary_period ?? "monthly",
+
+      city: request.city,
+
+      joiningTimeline: request.joining_timeline,
+
+    });
+
+    setEditingId(request.id);
+
+    setError("");
+
+    setSuccess("");
+
+    setShowForm(true);
+
+  }
+
+  async function saveRequest(submit: boolean) {
+
+    setError("");
+
+    setSuccess("");
+
+    if (submitting) return;
+
+    const clean = {
+
+      title: form.title.trim(),
+
+      department: form.department.trim(),
+
+      openings: Number(form.openings),
+
+      description: form.description.trim(),
+
+      responsibilities: form.responsibilities.trim(),
+
+      minimumExperience: form.minimumExperience.trim(),
+
+      maximumExperience: form.maximumExperience.trim(),
+
+      skills: form.skills
+
+        .split(/[,\n]/)
+
+        .map((skill) => skill.trim())
+
+        .filter(Boolean),
+
+      minimumSalary: form.minimumSalary.trim(),
+
+      maximumSalary: form.maximumSalary.trim(),
+
+      city: form.city.trim(),
+
+    };
+
+    if (
+
+      clean.title.length < 2 ||
+
+      clean.department.length < 2 ||
+
+      clean.city.length < 2
+
+    ) {
+
+      setError("Enter a valid role title, department and city.");
+
+      return;
+
+    }
+
+    if (
+
+      !Number.isInteger(clean.openings) ||
+
+      clean.openings < 1 ||
+
+      clean.openings > 500
+
+    ) {
+
+      setError("Openings must be between 1 and 500.");
+
+      return;
+
+    }
+
+    if (clean.description.length < 20) {
+
+      setError("The job description must contain at least 20 characters.");
+
+      return;
+
+    }
+
+    if (clean.skills.length > 30) {
+
+      setError("You can add a maximum of 30 skills.");
+
+      return;
+
+    }
+
+    const minExperience =
+
+      clean.minimumExperience === ""
+
+        ? null
+
+        : Number(clean.minimumExperience);
+
+    const maxExperience =
+
+      clean.maximumExperience === ""
+
+        ? null
+
+        : Number(clean.maximumExperience);
+
+    if (
+
+      (minExperience !== null &&
+
+        (!Number.isFinite(minExperience) || minExperience < 0)) ||
+
+      (maxExperience !== null &&
+
+        (!Number.isFinite(maxExperience) || maxExperience < 0)) ||
+
+      (minExperience !== null &&
+
+        maxExperience !== null &&
+
+        maxExperience < minExperience)
+
+    ) {
+
+      setError("Check the minimum and maximum experience values.");
+
+      return;
+
+    }
+
+    const minSalary =
+
+      clean.minimumSalary === "" ? null : Number(clean.minimumSalary);
+
+    const maxSalary =
+
+      clean.maximumSalary === "" ? null : Number(clean.maximumSalary);
+
+    if (
+
+      (minSalary === null) !== (maxSalary === null) ||
+
+      (minSalary !== null &&
+
+        (!Number.isFinite(minSalary) || minSalary < 0)) ||
+
+      (maxSalary !== null &&
+
+        (!Number.isFinite(maxSalary) || maxSalary < 0)) ||
+
+      (minSalary !== null &&
+
+        maxSalary !== null &&
+
+        maxSalary < minSalary)
+
+    ) {
+
+      setError("Enter both salary limits and ensure the maximum is not lower.");
+
+      return;
+
+    }
+
+    setSubmitting(true);
+
+    try {
+
+      const supabase = createClient();
+
+      const { data, error: saveError } = await supabase.rpc(
+
+        "save_restaurant_hiring_request",
+
+        {
+
+          p_request_id: editingId,
+
+          p_restaurant_id: restaurantId,
+
+          p_title: clean.title,
+
+          p_department: clean.department,
+
+          p_openings: clean.openings,
+
+          p_description: clean.description,
+
+          p_responsibilities: clean.responsibilities || null,
+
+          p_minimum_experience_years: minExperience,
+
+          p_maximum_experience_years: maxExperience,
+
+          p_required_skills: clean.skills,
+
+          p_employment_type: form.employmentType,
+
+          p_shift_type: form.shiftType,
+
+          p_minimum_salary: minSalary,
+
+          p_maximum_salary: maxSalary,
+
+          p_salary_currency: "INR",
+
+          p_salary_period: minSalary === null ? null : form.salaryPeriod,
+
+          p_city: clean.city,
+
+          p_joining_timeline: form.joiningTimeline,
+
+          p_submit: submit,
+
+        }
+
+      );
+
+      if (saveError) throw saveError;
+
+      if (!data) throw new Error("The hiring request was not saved.");
+
+      setShowForm(false);
+
+      setEditingId(null);
+
+      setForm(emptyForm);
+
+      setSuccess(
+
+        submit
+
+          ? "Hiring request submitted to Apronly for review."
+
+          : "Hiring request saved as a draft."
+
+      );
+
+      await refreshRequests();
+
+      router.refresh();
+
+    } catch (err) {
+
+      console.error("Hiring request save failed:", err);
+
+      setError(
+
+        err instanceof Error
+
+          ? err.message
+
+          : "Unable to save the hiring request."
+
+      );
+
+    } finally {
+
+      setSubmitting(false);
+
+    }
+
+  }
+
+  return (
+
+    <section className="mt-8 space-y-6">
+
+      {(error || success) && (
+
+        <div
+
+          role="status"
+
+          className={`rounded-xl border p-4 text-sm ${
+
+            error
+
+              ? "border-danger/30 bg-danger/5 text-danger"
+
+              : "border-sage/30 bg-sage/10 text-foreground"
+
+          }`}
+
+        >
+
+          {error || success}
+
+        </div>
+
+      )}
+
+      <article className="rounded-3xl border border-border bg-surface p-6 sm:p-8">
+
+        <div className="flex flex-wrap items-start justify-between gap-4">
+
+          <div>
+
+            <p className="text-xs font-semibold uppercase tracking-wider text-sage">
+
+              Recruitment
+
+            </p>
+
+            <h3 className="mt-2 text-xl font-semibold">
+
+              Hiring requirements
+
+            </h3>
+
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
+
+              Tell Apronly which roles you need to fill. Every request is
+
+              reviewed before it can become a public job listing.
+
+            </p>
+
+          </div>
+
+          {!showForm && (
+
+            <button
+
+              type="button"
+
+              onClick={startNewRequest}
+
+              className="rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white"
+
+            >
+
+              Create requirement
+
+            </button>
+
+          )}
+
+        </div>
+
+        {showForm && (
+
+          <div className="mt-7 space-y-6 border-t border-border pt-7">
+
+            <div>
+
+              <h4 className="font-semibold">
+
+                {editingId ? "Edit hiring requirement" : "New hiring requirement"}
+
+              </h4>
+
+              <p className="mt-1 text-xs text-muted">
+
+                Fields marked with * are required.
+
+              </p>
+
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+
+              <Field
+
+                label="Role / job title"
+
+                value={form.title}
+
+                onChange={(v) => update("title", v)}
+
+                required
+
+                placeholder="e.g. Head Chef"
+
+              />
+
+              <Field
+
+                label="Department"
+
+                value={form.department}
+
+                onChange={(v) => update("department", v)}
+
+                required
+
+                placeholder="e.g. Kitchen"
+
+              />
+
+              <Field
+
+                label="Number of openings"
+
+                type="number"
+
+                value={form.openings}
+
+                onChange={(v) => update("openings", v)}
+
+                required
+
+              />
+
+              <Field
+
+                label="Hiring city"
+
+                value={form.city}
+
+                onChange={(v) => update("city", v)}
+
+                required
+
+                placeholder="e.g. Hyderabad"
+
+              />
+
+              <Field
+
+                label="Minimum experience (years)"
+
+                type="number"
+
+                value={form.minimumExperience}
+
+                onChange={(v) => update("minimumExperience", v)}
+
+                placeholder="e.g. 1"
+
+              />
+
+              <Field
+
+                label="Maximum experience (years)"
+
+                type="number"
+
+                value={form.maximumExperience}
+
+                onChange={(v) => update("maximumExperience", v)}
+
+                placeholder="e.g. 5"
+
+              />
+
+              <SelectField
+
+                label="Employment type"
+
+                value={form.employmentType}
+
+                onChange={(v) => update("employmentType", v)}
+
+                options={[
+
+                  { value: "full_time", label: "Full time" },
+
+                  { value: "part_time", label: "Part time" },
+
+                  { value: "contract", label: "Contract" },
+
+                  { value: "temporary", label: "Temporary" },
+
+                  { value: "internship", label: "Internship" },
+
+                ]}
+
+              />
+
+              <SelectField
+
+                label="Shift"
+
+                value={form.shiftType}
+
+                onChange={(v) => update("shiftType", v)}
+
+                options={[
+
+                  { value: "day", label: "Day" },
+
+                  { value: "night", label: "Night" },
+
+                  { value: "rotational", label: "Rotational" },
+
+                  { value: "flexible", label: "Flexible" },
+
+                ]}
+
+              />
+
+              <Field
+
+                label="Minimum salary (₹)"
+
+                type="number"
+
+                value={form.minimumSalary}
+
+                onChange={(v) => update("minimumSalary", v)}
+
+                placeholder="e.g. 15000"
+
+              />
+
+              <Field
+
+                label="Maximum salary (₹)"
+
+                type="number"
+
+                value={form.maximumSalary}
+
+                onChange={(v) => update("maximumSalary", v)}
+
+                placeholder="e.g. 25000"
+
+              />
+
+              <SelectField
+
+                label="Salary period"
+
+                value={form.salaryPeriod}
+
+                onChange={(v) => update("salaryPeriod", v)}
+
+                options={[
+
+                  { value: "hourly", label: "Hourly" },
+
+                  { value: "daily", label: "Daily" },
+
+                  { value: "weekly", label: "Weekly" },
+
+                  { value: "monthly", label: "Monthly" },
+
+                  { value: "yearly", label: "Yearly" },
+
+                ]}
+
+              />
+
+              <SelectField
+
+                label="Joining timeline"
+
+                value={form.joiningTimeline}
+
+                onChange={(v) => update("joiningTimeline", v)}
+
+                options={[
+
+                  { value: "immediate", label: "Immediate" },
+
+                  { value: "within_15_days", label: "Within 15 days" },
+
+                  { value: "within_30_days", label: "Within 30 days" },
+
+                  { value: "within_60_days", label: "Within 60 days" },
+
+                  { value: "flexible", label: "Flexible" },
+
+                ]}
+
+              />
+
+            </div>
+
+            <label className="block">
+
+              <span className={labelClass}>Required skills</span>
+
+              <textarea
+
+                className={inputClass}
+
+                rows={3}
+
+                value={form.skills}
+
+                onChange={(e) => update("skills", e.target.value)}
+
+                placeholder="Food preparation, inventory management, team leadership"
+
+              />
+
+              <span className="mt-1 block text-xs text-muted">
+
+                Separate skills with commas.
+
+              </span>
+
+            </label>
+
+            <label className="block">
+
+              <span className={labelClass}>Job description *</span>
+
+              <textarea
+
+                className={inputClass}
+
+                rows={5}
+
+                maxLength={5000}
+
+                value={form.description}
+
+                onChange={(e) => update("description", e.target.value)}
+
+                placeholder="Describe the role, work environment and expectations."
+
+              />
+
+            </label>
+
+            <label className="block">
+
+              <span className={labelClass}>Responsibilities</span>
+
+              <textarea
+
+                className={inputClass}
+
+                rows={4}
+
+                maxLength={5000}
+
+                value={form.responsibilities}
+
+                onChange={(e) => update("responsibilities", e.target.value)}
+
+                placeholder="List the main responsibilities."
+
+              />
+
+            </label>
+
+            <div className="flex flex-wrap gap-3">
+
+              <button
+
+                type="button"
+
+                disabled={submitting}
+
+                onClick={() => void saveRequest(false)}
+
+                className="rounded-xl border border-border px-5 py-3 text-sm font-semibold disabled:opacity-60"
+
+              >
+
+                {submitting ? "Saving..." : "Save draft"}
+
+              </button>
+
+              <button
+
+                type="button"
+
+                disabled={submitting}
+
+                onClick={() => void saveRequest(true)}
+
+                className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white disabled:opacity-60"
+
+              >
+
+                {submitting ? "Submitting..." : "Submit for review"}
+
+              </button>
+
+              <button
+
+                type="button"
+
+                disabled={submitting}
+
+                onClick={() => {
+
+                  setShowForm(false);
+
+                  setEditingId(null);
+
+                  setError("");
+
+                }}
+
+                className="rounded-xl px-5 py-3 text-sm font-medium text-muted hover:bg-surface-muted"
+
+              >
+
+                Cancel
+
+              </button>
+
+            </div>
+
+          </div>
+
+        )}
+
+        <div className="mt-7 border-t border-border pt-6">
+
+          <h4 className="font-semibold">Your hiring requests</h4>
+
+          {loading ? (
+
+            <p className="mt-4 text-sm text-muted">Loading requirements...</p>
+
+          ) : requests.length === 0 ? (
+
+            <p className="mt-4 rounded-xl border border-dashed border-border p-6 text-sm text-muted">
+
+              No hiring requirements yet. Create your first requirement to
+
+              start the recruitment process.
+
+            </p>
+
+          ) : (
+
+            <div className="mt-5 space-y-4">
+
+              {requests.map((request) => (
+
+                <div
+
+                  key={request.id}
+
+                  className="rounded-2xl border border-border p-5"
+
+                >
+
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+
+                    <div>
+
+                      <h5 className="font-semibold">{request.title}</h5>
+
+                      <p className="mt-1 text-sm text-muted">
+
+                        {request.department} · {request.city} ·{" "}
+
+                        {request.openings} opening(s)
+
+                      </p>
+
+                    </div>
+
+                    <span
+
+                      className={`rounded-full px-3 py-1 text-xs font-semibold capitalize ${statusStyle(request.status)}`}
+
+                    >
+
+                      {formatStatus(request.status)}
+
+                    </span>
+
+                  </div>
+
+                  <p className="mt-3 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-muted">
+
+                    {request.description}
+
+                  </p>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+
+                    <p className="text-xs text-muted">
+
+                      Created{" "}
+
+                      {new Date(request.created_at).toLocaleDateString("en-IN")}
+
+                    </p>
+
+                    {["draft", "changes_requested"].includes(request.status) && (
+
+                      <button
+
+                        type="button"
+
+                        onClick={() => startEdit(request)}
+
+                        className="rounded-lg border border-border px-3 py-2 text-xs font-semibold hover:bg-surface-muted"
+
+                      >
+
+                        Edit requirement
+
+                      </button>
+
+                    )}
+
+                  </div>
+
+                </div>
+
+              ))}
+
+            </div>
+
+          )}
+
+        </div>
+
+      </article>
+
+    </section>
+
+  );
+
+}

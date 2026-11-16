@@ -1,0 +1,1879 @@
+"use client";
+
+import { useState } from "react";
+
+import Image from "next/image";
+
+import { useRouter } from "next/navigation";
+
+import { createClient } from "@/lib/supabase/client";
+
+type Restaurant = {
+
+  id: string;
+
+  name: string;
+
+  legal_name: string | null;
+
+  description: string | null;
+
+  business_email: string | null;
+
+  business_phone: string | null;
+
+  website_url: string | null;
+
+  category: string | null;
+
+};
+
+type Outlet = {
+
+  id: string;
+
+  name: string;
+
+  city: string;
+
+  address_line1: string | null;
+
+  address_line2: string | null;
+
+  landmark: string | null;
+
+  state: string | null;
+
+  postal_code: string | null;
+
+  country: string;
+
+  phone: string | null;
+
+  email: string | null;
+
+  is_primary: boolean;
+
+};
+
+type Props = {
+
+  restaurant: Restaurant;
+
+  outlets: Outlet[];
+
+  canEdit: boolean;
+
+};
+
+const inputClass =
+
+  "w-full rounded-xl border border-[#E5DED2] bg-white px-4 py-3.5 text-sm text-[#292B24] shadow-[0_1px_2px_rgba(40,38,30,0.025)] outline-none transition placeholder:text-[#A09B8F] focus:border-[#82947A] focus:ring-4 focus:ring-[#82947A]/10 disabled:cursor-not-allowed disabled:opacity-60";
+
+const labelClass =
+
+  "mb-2.5 block text-[11px] font-semibold uppercase tracking-[0.12em] text-[#747568]";
+
+const categories = [
+
+  "Fine Dining",
+
+  "Casual Dining",
+
+  "Cafe",
+
+  "Quick Service Restaurant",
+
+  "Bakery",
+
+  "Cloud Kitchen",
+
+  "Bar and Lounge",
+
+  "Hotel Restaurant",
+
+  "Food Court",
+
+  "Other",
+
+];
+
+const emptyOutlet = {
+
+  name: "",
+
+  city: "",
+
+  address_line1: "",
+
+  address_line2: "",
+
+  landmark: "",
+
+  state: "",
+
+  postal_code: "",
+
+  country: "India",
+
+  phone: "",
+
+  email: "",
+
+  is_primary: false,
+
+};
+
+function normalize(value: string) {
+
+  return value.trim().replace(/\s+/g, " ");
+
+}
+
+function Icon({
+
+  name,
+
+  className = "h-5 w-5",
+
+}: {
+
+  name: "store" | "mail" | "phone" | "globe" | "tag" | "file" | "pin" | "edit" | "plus" | "check" | "building" | "close";
+
+  className?: string;
+
+}) {
+
+  const paths = {
+
+    store: (
+
+      <>
+
+        <path d="M3 10h18l-2-6H5l-2 6Z" />
+
+        <path d="M5 10v10h14V10" />
+
+        <path d="M9 20v-6h6v6" />
+
+      </>
+
+    ),
+
+    mail: (
+
+      <>
+
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+
+        <path d="m3 7 9 6 9-6" />
+
+      </>
+
+    ),
+
+    phone: (
+
+      <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2Z" />
+
+    ),
+
+    globe: (
+
+      <>
+
+        <circle cx="12" cy="12" r="9" />
+
+        <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+
+      </>
+
+    ),
+
+    tag: (
+
+      <>
+
+        <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8Z" />
+
+        <circle cx="7.5" cy="7.5" r="1" />
+
+      </>
+
+    ),
+
+    file: (
+
+      <>
+
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+
+        <path d="M14 2v6h6M8 13h8M8 17h8" />
+
+      </>
+
+    ),
+
+    pin: (
+
+      <>
+
+        <path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z" />
+
+        <circle cx="12" cy="10" r="2.5" />
+
+      </>
+
+    ),
+
+    edit: (
+
+      <>
+
+        <path d="m16 4 4 4L8 20H4v-4Z" />
+
+        <path d="m14 6 4 4" />
+
+      </>
+
+    ),
+
+    plus: (
+
+      <>
+
+        <path d="M12 5v14M5 12h14" />
+
+      </>
+
+    ),
+
+    check: <path d="m5 12 4 4L19 6" />,
+
+    building: (
+
+      <>
+
+        <rect x="4" y="3" width="16" height="18" rx="2" />
+
+        <path d="M9 7h2M14 7h2M9 11h2M14 11h2M9 15h2M14 15h2M10 21v-3h4v3" />
+
+      </>
+
+    ),
+
+    close: <path d="m18 6-12 12M6 6l12 12" />,
+
+  };
+
+  return (
+
+    <svg
+
+      viewBox="0 0 24 24"
+
+      fill="none"
+
+      stroke="currentColor"
+
+      strokeWidth="1.7"
+
+      strokeLinecap="round"
+
+      strokeLinejoin="round"
+
+      aria-hidden="true"
+
+      className={className}
+
+    >
+
+      {paths[name]}
+
+    </svg>
+
+  );
+
+}
+
+function Field({
+
+  label,
+
+  value,
+
+  onChange,
+
+  required = false,
+
+  type = "text",
+
+  maxLength,
+
+  placeholder,
+
+}: {
+
+  label: string;
+
+  value: string;
+
+  onChange: (value: string) => void;
+
+  required?: boolean;
+
+  type?: string;
+
+  maxLength?: number;
+
+  placeholder?: string;
+
+}) {
+
+  return (
+
+    <label className="block">
+
+      <span className={labelClass}>
+
+        {label}
+
+        {required && <span className="ml-1 text-[#B84C42]">*</span>}
+
+      </span>
+
+      <input
+
+        className={inputClass}
+
+        type={type}
+
+        value={value}
+
+        onChange={(event) => onChange(event.target.value)}
+
+        required={required}
+
+        maxLength={maxLength}
+
+        placeholder={placeholder}
+
+      />
+
+    </label>
+
+  );
+
+}
+
+function InfoItem({
+
+  icon,
+
+  label,
+
+  value,
+
+}: {
+
+  icon: "building" | "mail" | "phone" | "globe" | "tag" | "file";
+
+  label: string;
+
+  value: string;
+
+}) {
+
+  return (
+
+    <div className="flex min-w-0 items-start gap-3 rounded-2xl border border-[#EEE9DF] bg-[#FBFAF6] p-4 sm:p-5">
+
+      <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#EAEFE4] text-[#526E51]">
+
+        <Icon name={icon} className="h-[17px] w-[17px]" />
+
+      </span>
+
+      <div className="min-w-0">
+
+        <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[#898879]">{label}</p>
+
+        <p className="mt-1.5 break-words text-sm font-semibold leading-6 text-[#303229]">
+
+          {value || "Not provided"}
+
+        </p>
+
+      </div>
+
+    </div>
+
+  );
+
+}
+
+export default function RestaurantManagement({
+
+  restaurant,
+
+  outlets: initialOutlets,
+
+  canEdit,
+
+}: Props) {
+
+  const router = useRouter();
+
+  const [profile, setProfile] = useState({
+
+    name: restaurant.name ?? "",
+
+    legalName: restaurant.legal_name ?? "",
+
+    description: restaurant.description ?? "",
+
+    email: restaurant.business_email ?? "",
+
+    phone: restaurant.business_phone ?? "",
+
+    website: restaurant.website_url ?? "",
+
+    category: restaurant.category ?? "",
+
+  });
+
+  const [outlets, setOutlets] = useState(initialOutlets);
+
+  const [editingProfile, setEditingProfile] = useState(false);
+
+  const [editingOutlet, setEditingOutlet] = useState<string | null>(null);
+
+  const [outletForm, setOutletForm] = useState(emptyOutlet);
+
+  const [showOutletForm, setShowOutletForm] = useState(false);
+
+  const [savingProfile, setSavingProfile] = useState(false);
+
+  const [savingOutlet, setSavingOutlet] = useState(false);
+
+  const [error, setError] = useState("");
+
+  const [success, setSuccess] = useState("");
+
+  function updateProfile(key: keyof typeof profile, value: string) {
+
+    setProfile((current) => ({ ...current, [key]: value }));
+
+  }
+
+  function updateOutlet(
+
+    key: keyof typeof emptyOutlet,
+
+    value: string | boolean,
+
+  ) {
+
+    setOutletForm((current) => ({ ...current, [key]: value }));
+
+  }
+
+  async function saveProfile(event: React.FormEvent<HTMLFormElement>) {
+
+    event.preventDefault();
+
+    setError("");
+
+    setSuccess("");
+
+    if (!canEdit || savingProfile) return;
+
+    const clean = {
+
+      name: normalize(profile.name),
+
+      legalName: normalize(profile.legalName),
+
+      description: profile.description.trim(),
+
+      email: profile.email.trim().toLowerCase(),
+
+      phone: profile.phone.trim(),
+
+      website: profile.website.trim(),
+
+      category: normalize(profile.category),
+
+    };
+
+    if (clean.name.length < 2) {
+
+      setError("Restaurant name must contain at least 2 characters.");
+
+      return;
+
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)) {
+
+      setError("Enter a valid business email address.");
+
+      return;
+
+    }
+
+    if (!/^[+0-9() .-]{7,30}$/.test(clean.phone)) {
+
+      setError("Enter a valid business phone number.");
+
+      return;
+
+    }
+
+    if (clean.website && !/^https?:\/\/.+/i.test(clean.website)) {
+
+      setError("Website must start with http:// or https://.");
+
+      return;
+
+    }
+
+    if (!clean.category) {
+
+      setError("Select a restaurant category.");
+
+      return;
+
+    }
+
+    setSavingProfile(true);
+
+    try {
+
+      const supabase = createClient();
+
+      const { error: saveError } = await supabase.rpc(
+
+        "update_restaurant_business_profile",
+
+        {
+
+          p_restaurant_id: restaurant.id,
+
+          p_name: clean.name,
+
+          p_legal_name: clean.legalName || null,
+
+          p_description: clean.description || null,
+
+          p_business_email: clean.email,
+
+          p_business_phone: clean.phone,
+
+          p_website_url: clean.website || null,
+
+          p_category: clean.category,
+
+        },
+
+      );
+
+      if (saveError) throw saveError;
+
+      setProfile({
+
+        name: clean.name,
+
+        legalName: clean.legalName,
+
+        description: clean.description,
+
+        email: clean.email,
+
+        phone: clean.phone,
+
+        website: clean.website,
+
+        category: clean.category,
+
+      });
+
+      setEditingProfile(false);
+
+      setSuccess("Business profile updated successfully.");
+
+      router.refresh();
+
+    } catch (err) {
+
+      console.error("Restaurant profile update failed:", err);
+
+      setError(
+
+        err instanceof Error
+
+          ? err.message
+
+          : "Unable to update restaurant profile.",
+
+      );
+
+    } finally {
+
+      setSavingProfile(false);
+
+    }
+
+  }
+
+  function startNewOutlet() {
+
+    setError("");
+
+    setSuccess("");
+
+    setEditingOutlet(null);
+
+    setOutletForm({
+
+      ...emptyOutlet,
+
+      is_primary: outlets.length === 0,
+
+    });
+
+    setShowOutletForm(true);
+
+  }
+
+  function startEditOutlet(outlet: Outlet) {
+
+    setError("");
+
+    setSuccess("");
+
+    setEditingOutlet(outlet.id);
+
+    setOutletForm({
+
+      name: outlet.name,
+
+      city: outlet.city,
+
+      address_line1: outlet.address_line1 ?? "",
+
+      address_line2: outlet.address_line2 ?? "",
+
+      landmark: outlet.landmark ?? "",
+
+      state: outlet.state ?? "",
+
+      postal_code: outlet.postal_code ?? "",
+
+      country: outlet.country,
+
+      phone: outlet.phone ?? "",
+
+      email: outlet.email ?? "",
+
+      is_primary: outlet.is_primary,
+
+    });
+
+    setShowOutletForm(true);
+
+  }
+
+  async function saveOutlet(event: React.FormEvent<HTMLFormElement>) {
+
+    event.preventDefault();
+
+    setError("");
+
+    setSuccess("");
+
+    if (!canEdit || savingOutlet) return;
+
+    const clean = {
+
+      name: normalize(outletForm.name),
+
+      city: normalize(outletForm.city),
+
+      address_line1: normalize(outletForm.address_line1),
+
+      address_line2: normalize(outletForm.address_line2),
+
+      landmark: normalize(outletForm.landmark),
+
+      state: normalize(outletForm.state),
+
+      postal_code: normalize(outletForm.postal_code),
+
+      country: normalize(outletForm.country),
+
+      phone: outletForm.phone.trim(),
+
+      email: outletForm.email.trim().toLowerCase(),
+
+      is_primary: outletForm.is_primary,
+
+    };
+
+    if (clean.name.length < 2 || clean.city.length < 2) {
+
+      setError("Enter a valid outlet name and city.");
+
+      return;
+
+    }
+
+    if (clean.address_line1.length < 5) {
+
+      setError("Enter the complete outlet address.");
+
+      return;
+
+    }
+
+    if (!clean.state || !clean.postal_code || !clean.country) {
+
+      setError("State, postal code and country are required.");
+
+      return;
+
+    }
+
+    if (clean.phone && !/^[+0-9() .-]{7,30}$/.test(clean.phone)) {
+
+      setError("Enter a valid outlet phone number.");
+
+      return;
+
+    }
+
+    if (clean.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean.email)) {
+
+      setError("Enter a valid outlet email address.");
+
+      return;
+
+    }
+
+    setSavingOutlet(true);
+
+    try {
+
+      const supabase = createClient();
+
+      const { data: savedId, error: saveError } = await supabase.rpc(
+
+        "save_restaurant_outlet",
+
+        {
+
+          p_restaurant_id: restaurant.id,
+
+          p_outlet_id: editingOutlet,
+
+          p_name: clean.name,
+
+          p_city: clean.city,
+
+          p_address_line1: clean.address_line1,
+
+          p_address_line2: clean.address_line2 || null,
+
+          p_landmark: clean.landmark || null,
+
+          p_state: clean.state,
+
+          p_postal_code: clean.postal_code,
+
+          p_country: clean.country,
+
+          p_phone: clean.phone || null,
+
+          p_email: clean.email || null,
+
+          p_is_primary: clean.is_primary,
+
+        },
+
+      );
+
+      if (saveError) throw saveError;
+
+      if (!savedId) {
+
+        throw new Error("The outlet was not saved. Please try again.");
+
+      }
+
+      const updatedOutlet: Outlet = {
+
+        id: savedId,
+
+        ...clean,
+
+      };
+
+      setOutlets((current) => {
+
+        const next = editingOutlet
+
+          ? current.map((outlet) =>
+
+              outlet.id === savedId ? updatedOutlet : outlet,
+
+            )
+
+          : [...current, updatedOutlet];
+
+        if (clean.is_primary) {
+
+          return next.map((outlet) => ({
+
+            ...outlet,
+
+            is_primary: outlet.id === savedId,
+
+          }));
+
+        }
+
+        return next;
+
+      });
+
+      setShowOutletForm(false);
+
+      setEditingOutlet(null);
+
+      setSuccess(
+
+        editingOutlet
+
+          ? "Outlet updated successfully."
+
+          : "New outlet added successfully.",
+
+      );
+
+      router.refresh();
+
+    } catch (err) {
+
+      console.error("Restaurant outlet save failed:", err);
+
+      setError(
+
+        err instanceof Error
+
+          ? err.message
+
+          : "Unable to save outlet.",
+
+      );
+
+    } finally {
+
+      setSavingOutlet(false);
+
+    }
+
+  }
+
+  return (
+
+    <section
+
+      className="mt-0 space-y-8"
+
+      aria-label="Restaurant business and outlets"
+
+    >
+
+      {(error || success) && (
+
+        <div
+
+          role="status"
+
+          className={`rounded-2xl border p-4 text-sm ${
+
+            error
+
+              ? "border-[#EBD5D1] bg-[#FBF0EE] text-[#A7473F]"
+
+              : "border-[#DCE8D5] bg-[#F1F6EC] text-[#456444]"
+
+          }`}
+
+        >
+
+          {error || success}
+
+        </div>
+
+      )}
+
+      {/* BUSINESS PROFILE */}
+
+      <article
+
+        id="business-profile"
+
+        className="scroll-mt-28 overflow-hidden rounded-[30px] border border-[#E7E1D6] bg-white shadow-[0_18px_55px_rgba(48,44,32,0.055)]"
+
+      >
+
+        <div className="border-b border-[#EAE4D9] bg-gradient-to-br from-[#F5F1E7] via-[#F4F2E9] to-[#E9EEE4] p-7 sm:p-9">
+
+          <div className="flex flex-wrap items-start justify-between gap-4">
+
+            <div className="flex min-w-0 items-center gap-4">
+
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#243D2C] text-white shadow-sm sm:h-16 sm:w-16">
+
+                <Icon name="store" className="h-7 w-7" />
+
+              </div>
+
+              <div className="min-w-0">
+
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#71836A]">
+
+                  Business information
+
+                </p>
+
+                <h3 className="mt-1 font-serif text-[27px] tracking-tight text-[#292B24] sm:text-[32px]">
+
+                  {profile.name}
+
+                </h3>
+
+                <p className="mt-1 text-sm text-[#77766F]">
+
+                  {profile.legalName || "Restaurant profile"}
+
+                </p>
+
+              </div>
+
+            </div>
+
+            {canEdit && !editingProfile && (
+
+              <button
+
+                type="button"
+
+                onClick={() => {
+
+                  setError("");
+
+                  setSuccess("");
+
+                  setEditingProfile(true);
+
+                }}
+
+                className="inline-flex items-center gap-2 rounded-xl border border-[#E2DBCF] bg-white/80 px-4 py-2.5 text-sm font-medium text-[#34372F] transition hover:bg-white"
+
+              >
+
+                <Icon name="edit" className="h-4 w-4" />
+
+                Edit profile
+
+              </button>
+
+            )}
+
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[#E7F0E0] px-3 py-1.5 text-xs font-semibold text-[#42633C]">
+
+              <Icon name="check" className="h-3.5 w-3.5" />
+
+              Verified
+
+            </span>
+
+            {profile.category && (
+
+              <span className="rounded-full border border-[#E1DCCF] bg-white/80 px-3 py-1.5 text-xs font-medium text-[#68685E]">
+
+                {profile.category}
+
+              </span>
+
+            )}
+
+          </div>
+
+        </div>
+
+        <div className="p-5 sm:p-8 lg:p-9">
+
+          {editingProfile ? (
+
+            <form onSubmit={saveProfile} className="space-y-6">
+
+              <div className="grid gap-5 sm:grid-cols-2">
+
+                <Field
+
+                  label="Restaurant name"
+
+                  value={profile.name}
+
+                  onChange={(v) => updateProfile("name", v)}
+
+                  required
+
+                  maxLength={200}
+
+                />
+
+                <Field
+
+                  label="Legal business name"
+
+                  value={profile.legalName}
+
+                  onChange={(v) => updateProfile("legalName", v)}
+
+                  maxLength={200}
+
+                />
+
+                <Field
+
+                  label="Business email"
+
+                  value={profile.email}
+
+                  onChange={(v) => updateProfile("email", v)}
+
+                  required
+
+                  type="email"
+
+                />
+
+                <Field
+
+                  label="Business phone"
+
+                  value={profile.phone}
+
+                  onChange={(v) => updateProfile("phone", v)}
+
+                  required
+
+                />
+
+                <Field
+
+                  label="Website"
+
+                  value={profile.website}
+
+                  onChange={(v) => updateProfile("website", v)}
+
+                  placeholder="https://example.com"
+
+                />
+
+                <label className="block">
+
+                  <span className={labelClass}>Business category</span>
+
+                  <select
+
+                    className={inputClass}
+
+                    value={profile.category}
+
+                    onChange={(e) =>
+
+                      updateProfile("category", e.target.value)
+
+                    }
+
+                    required
+
+                  >
+
+                    <option value="">Select category</option>
+
+                    {categories.map((category) => (
+
+                      <option key={category} value={category}>
+
+                        {category}
+
+                      </option>
+
+                    ))}
+
+                  </select>
+
+                </label>
+
+              </div>
+
+              <label className="block">
+
+                <span className={labelClass}>Business description</span>
+
+                <textarea
+
+                  className={inputClass}
+
+                  rows={4}
+
+                  maxLength={2000}
+
+                  value={profile.description}
+
+                  onChange={(e) =>
+
+                    updateProfile("description", e.target.value)
+
+                  }
+
+                  placeholder="Tell candidates about your restaurant."
+
+                />
+
+              </label>
+
+              <div className="flex flex-wrap gap-3 border-t border-[#ECE6DB] pt-5">
+
+                <button
+
+                  type="submit"
+
+                  disabled={savingProfile}
+
+                  className="rounded-full bg-[#243D2C] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#314A37] disabled:opacity-60"
+
+                >
+
+                  {savingProfile ? "Saving..." : "Save changes"}
+
+                </button>
+
+                <button
+
+                  type="button"
+
+                  disabled={savingProfile}
+
+                  onClick={() => {
+
+                    setEditingProfile(false);
+
+                    setProfile({
+
+                      name: restaurant.name ?? "",
+
+                      legalName: restaurant.legal_name ?? "",
+
+                      description: restaurant.description ?? "",
+
+                      email: restaurant.business_email ?? "",
+
+                      phone: restaurant.business_phone ?? "",
+
+                      website: restaurant.website_url ?? "",
+
+                      category: restaurant.category ?? "",
+
+                    });
+
+                    setError("");
+
+                  }}
+
+                  className="rounded-full border border-[#E4DDD1] px-6 py-3 text-sm font-medium text-[#4E5148] transition hover:bg-[#F8F6F0]"
+
+                >
+
+                  Cancel
+
+                </button>
+
+              </div>
+
+            </form>
+
+          ) : (
+
+            <div className="space-y-6">
+
+              <div className="grid gap-3 sm:grid-cols-2">
+
+                <InfoItem
+
+                  icon="building"
+
+                  label="Business name"
+
+                  value={profile.name}
+
+                />
+
+                <InfoItem
+
+                  icon="building"
+
+                  label="Legal name"
+
+                  value={profile.legalName}
+
+                />
+
+                <InfoItem
+
+                  icon="mail"
+
+                  label="Business email"
+
+                  value={profile.email}
+
+                />
+
+                <InfoItem
+
+                  icon="phone"
+
+                  label="Business phone"
+
+                  value={profile.phone}
+
+                />
+
+                <InfoItem
+
+                  icon="globe"
+
+                  label="Website"
+
+                  value={profile.website}
+
+                />
+
+                <InfoItem
+
+                  icon="tag"
+
+                  label="Category"
+
+                  value={profile.category}
+
+                />
+
+              </div>
+
+              <div className="rounded-2xl border border-[#EEE9DF] bg-[#FBFAF6] p-5 sm:p-6">
+
+                <div className="flex items-start gap-3">
+
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[#F5F0E5] text-[#526E51]">
+
+                    <Icon name="file" className="h-[17px] w-[17px]" />
+
+                  </span>
+
+                  <div>
+
+                    <p className="text-xs text-[#858276]">
+
+                      Business description
+
+                    </p>
+
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[#44463D]">
+
+                      {profile.description || "No description provided."}
+
+                    </p>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            </div>
+
+          )}
+
+        </div>
+
+      </article>
+
+      {/* OUTLETS */}
+
+      <article
+
+        id="outlets"
+
+        className="scroll-mt-28 rounded-[30px] border border-[#E7E1D6] bg-white p-6 shadow-[0_18px_55px_rgba(48,44,32,0.045)] sm:p-8 lg:p-9"
+
+      >
+
+        <div className="flex flex-wrap items-start justify-between gap-4">
+
+          <div>
+
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[#71836A]">
+
+              Locations
+
+            </p>
+
+            <h3 className="mt-2 font-serif text-[27px] text-[#292B24] sm:text-[32px]">
+
+              Restaurant outlets
+
+            </h3>
+
+            <p className="mt-1.5 max-w-xl text-sm leading-6 text-[#77766F]">
+
+              Manage the physical locations where your business operates.
+
+            </p>
+
+          </div>
+
+          {canEdit && !showOutletForm && (
+
+            <button
+
+              type="button"
+
+              onClick={startNewOutlet}
+
+              className="inline-flex items-center gap-2 rounded-xl bg-[#243D2C] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#314A37]"
+
+            >
+
+              <Icon name="plus" className="h-4 w-4" />
+
+              Add outlet
+
+            </button>
+
+          )}
+
+        </div>
+
+        {outlets.length === 0 && !showOutletForm && (
+
+          <div className="mt-7 rounded-2xl border border-dashed border-[#DCD5C8] bg-[#FAF8F3] px-6 py-10 text-center">
+
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-[#F0EBDD] text-[#61775C]">
+
+              <Icon name="store" className="h-6 w-6" />
+
+            </span>
+
+            <h4 className="mt-4 font-serif text-xl text-[#34372F]">
+
+              No outlets yet
+
+            </h4>
+
+            <p className="mt-2 text-sm text-[#858276]">
+
+              Add your first physical location to get started.
+
+            </p>
+
+          </div>
+
+        )}
+
+        <div className="mt-6 space-y-4">
+
+          {outlets.map((outlet) => (
+
+            <article
+
+              key={outlet.id}
+
+              className="group overflow-hidden rounded-[24px] border border-[#E9E3D9] bg-[#FCFBF8] transition duration-300 hover:-translate-y-0.5 hover:border-[#C9D3C1] hover:shadow-[0_16px_34px_rgba(40,38,30,0.07)]"
+
+            >
+
+              <div className="grid gap-0 sm:grid-cols-[220px_minmax(0,1fr)]">
+
+                <div className="relative min-h-[190px] overflow-hidden sm:min-h-[230px]">
+
+                  <Image
+
+                    src="/images/apronly-restaurant-hero.png"
+
+                    alt="Restaurant interior"
+
+                    fill
+
+                    sizes="(max-width: 640px) 100vw, 220px"
+
+                    className="object-cover transition duration-500 group-hover:scale-[1.04]"
+
+                  />
+
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#18291E]/35 to-transparent" />
+
+                  <span className="absolute bottom-3 left-3 rounded-full border border-white/30 bg-black/25 px-3 py-1 text-[10px] font-medium text-white backdrop-blur-sm">
+
+                    {outlet.city}
+
+                  </span>
+
+                </div>
+
+                <div className="min-w-0 p-5 sm:p-7">
+
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+
+                    <div className="min-w-0">
+
+                      <div className="flex flex-wrap items-center gap-2">
+
+                        <h4 className="font-serif text-xl text-[#292B24]">
+
+                          {outlet.name}
+
+                        </h4>
+
+                        {outlet.is_primary && (
+
+                          <span className="rounded-full bg-[#E8F0E1] px-3 py-1 text-[10px] font-semibold text-[#4E7048]">
+
+                            Primary outlet
+
+                          </span>
+
+                        )}
+
+                      </div>
+
+                      <p className="mt-1 text-sm text-[#77766F]">
+
+                        {outlet.city}
+
+                      </p>
+
+                    </div>
+
+                    {canEdit && (
+
+                      <button
+
+                        type="button"
+
+                        onClick={() => startEditOutlet(outlet)}
+
+                        className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-[#E3DCCF] bg-white px-3.5 py-2 text-xs font-semibold text-[#4C5147] transition hover:border-[#BCCAB3] hover:bg-[#F8F7F1]"
+
+                      >
+
+                        <Icon name="edit" className="h-3.5 w-3.5" />
+
+                        Edit
+
+                      </button>
+
+                    )}
+
+                  </div>
+
+                  <div className="mt-5 space-y-3 border-t border-[#EAE4D9] pt-4">
+
+                    <div className="flex items-start gap-3">
+
+                      <Icon
+
+                        name="pin"
+
+                        className="mt-0.5 h-[17px] w-[17px] shrink-0 text-[#71836A]"
+
+                      />
+
+                      <div>
+
+                        <p className="text-sm leading-6 text-[#44463D]">
+
+                          {[
+
+                            outlet.address_line1,
+
+                            outlet.address_line2,
+
+                            outlet.landmark,
+
+                          ]
+
+                            .filter(Boolean)
+
+                            .join(", ") || "Address not completed"}
+
+                        </p>
+
+                        <p className="mt-1 text-xs text-[#858276]">
+
+                          {[
+
+                            outlet.state,
+
+                            outlet.postal_code,
+
+                            outlet.country,
+
+                          ]
+
+                            .filter(Boolean)
+
+                            .join(" · ")}
+
+                        </p>
+
+                      </div>
+
+                    </div>
+
+                    {outlet.phone && (
+
+                      <div className="flex items-center gap-3 text-sm text-[#55584E]">
+
+                        <Icon
+
+                          name="phone"
+
+                          className="h-4 w-4 shrink-0 text-[#71836A]"
+
+                        />
+
+                        {outlet.phone}
+
+                      </div>
+
+                    )}
+
+                    {outlet.email && (
+
+                      <div className="flex items-center gap-3 text-sm text-[#55584E]">
+
+                        <Icon
+
+                          name="mail"
+
+                          className="h-4 w-4 shrink-0 text-[#71836A]"
+
+                        />
+
+                        <span className="break-all">{outlet.email}</span>
+
+                      </div>
+
+                    )}
+
+                  </div>
+
+                </div>
+
+              </div>
+
+            </article>
+
+          ))}
+
+        </div>
+
+        {showOutletForm && (
+
+          <form
+
+            onSubmit={saveOutlet}
+
+            className="mt-7 space-y-6 rounded-[26px] border border-[#E5DED2] bg-[#F8F6F0] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] sm:p-8"
+
+          >
+
+            <div className="flex items-start justify-between gap-3">
+
+              <div>
+
+                <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-[#71836A]">
+
+                  Outlet details
+
+                </p>
+
+                <h4 className="mt-2 font-serif text-2xl text-[#292B24]">
+
+                  {editingOutlet ? "Edit outlet" : "Add a new outlet"}
+
+                </h4>
+
+                <p className="mt-1 text-xs text-[#858276]">
+
+                  Fields marked with * are required.
+
+                </p>
+
+              </div>
+
+              <button
+
+                type="button"
+
+                onClick={() => {
+
+                  setShowOutletForm(false);
+
+                  setEditingOutlet(null);
+
+                  setError("");
+
+                }}
+
+                className="flex h-9 w-9 items-center justify-center rounded-full border border-[#E2DBCF] bg-white text-[#66685E] transition hover:bg-[#F1EDE4]"
+
+                aria-label="Close outlet form"
+
+              >
+
+                <Icon name="close" className="h-4 w-4" />
+
+              </button>
+
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+
+              <Field
+
+                label="Outlet name"
+
+                value={outletForm.name}
+
+                onChange={(v) => updateOutlet("name", v)}
+
+                required
+
+                maxLength={150}
+
+              />
+
+              <Field
+
+                label="City"
+
+                value={outletForm.city}
+
+                onChange={(v) => updateOutlet("city", v)}
+
+                required
+
+                maxLength={100}
+
+              />
+
+              <div className="sm:col-span-2">
+
+                <Field
+
+                  label="Address line 1"
+
+                  value={outletForm.address_line1}
+
+                  onChange={(v) => updateOutlet("address_line1", v)}
+
+                  required
+
+                  maxLength={300}
+
+                />
+
+              </div>
+
+              <Field
+
+                label="Address line 2"
+
+                value={outletForm.address_line2}
+
+                onChange={(v) => updateOutlet("address_line2", v)}
+
+                maxLength={300}
+
+              />
+
+              <Field
+
+                label="Landmark"
+
+                value={outletForm.landmark}
+
+                onChange={(v) => updateOutlet("landmark", v)}
+
+                maxLength={150}
+
+              />
+
+              <Field
+
+                label="State"
+
+                value={outletForm.state}
+
+                onChange={(v) => updateOutlet("state", v)}
+
+                required
+
+                maxLength={100}
+
+              />
+
+              <Field
+
+                label="Postal code"
+
+                value={outletForm.postal_code}
+
+                onChange={(v) => updateOutlet("postal_code", v)}
+
+                required
+
+                maxLength={20}
+
+              />
+
+              <Field
+
+                label="Country"
+
+                value={outletForm.country}
+
+                onChange={(v) => updateOutlet("country", v)}
+
+                required
+
+                maxLength={100}
+
+              />
+
+              <Field
+
+                label="Outlet phone"
+
+                value={outletForm.phone}
+
+                onChange={(v) => updateOutlet("phone", v)}
+
+                maxLength={30}
+
+              />
+
+              <Field
+
+                label="Outlet email"
+
+                value={outletForm.email}
+
+                onChange={(v) => updateOutlet("email", v)}
+
+                type="email"
+
+                maxLength={254}
+
+              />
+
+            </div>
+
+            <label className="flex items-center gap-3 rounded-xl border border-[#E5DED2] bg-white/70 p-4 text-sm text-[#45483E]">
+
+              <input
+
+                type="checkbox"
+
+                checked={outletForm.is_primary}
+
+                onChange={(e) =>
+
+                  updateOutlet("is_primary", e.target.checked)
+
+                }
+
+                className="h-4 w-4 accent-[#314A37]"
+
+              />
+
+              Set as primary outlet
+
+            </label>
+
+            <div className="flex flex-wrap gap-3 border-t border-[#E5DED2] pt-5">
+
+              <button
+
+                type="submit"
+
+                disabled={savingOutlet}
+
+                className="rounded-full bg-[#243D2C] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#314A37] disabled:opacity-60"
+
+              >
+
+                {savingOutlet ? "Saving..." : "Save outlet"}
+
+              </button>
+
+              <button
+
+                type="button"
+
+                disabled={savingOutlet}
+
+                onClick={() => {
+
+                  setShowOutletForm(false);
+
+                  setEditingOutlet(null);
+
+                  setError("");
+
+                }}
+
+                className="rounded-full border border-[#E2DBCF] bg-white px-6 py-3 text-sm font-medium text-[#4E5148] transition hover:bg-[#F1EDE4]"
+
+              >
+
+                Cancel
+
+              </button>
+
+            </div>
+
+          </form>
+
+        )}
+
+      </article>
+
+    </section>
+
+  );
+
+}

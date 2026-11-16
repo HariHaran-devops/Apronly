@@ -1,0 +1,196 @@
+﻿
+import Link from "next/link";
+import { requireAnyRole } from "@/lib/auth/authorization";
+import { createClient } from "@/lib/supabase/server";
+import PipelineClient, { type PipelineRecord } from "./pipeline-client";
+
+export const instant = false;
+
+export default async function RecruitmentPipelinePage() {
+  await requireAnyRole(["admin"]);
+
+  const supabase = await createClient();
+
+  const { data: pipelineRows, error: pipelineError } = await supabase
+    .from("candidate_recruitment_pipeline")
+    .select(
+      "id, match_id, stage, internal_notes, consent_obtained_at, consent_obtained_by, consent_method, consent_scope, created_at, updated_at"
+    )
+    .order("updated_at", { ascending: false });
+
+  if (pipelineError) {
+    return (
+      <main className="min-h-screen bg-background px-5 py-12">
+        <div className="mx-auto max-w-5xl rounded-2xl border border-border bg-surface p-6">
+          <h1 className="text-xl font-semibold">
+            Unable to load recruitment pipeline
+          </h1>
+          <p className="mt-3 text-sm text-muted">
+            {pipelineError.message}
+          </p>
+          <Link href="/ops" className="mt-5 inline-block text-sm underline">
+            Return to operations
+          </Link>
+        </div>
+      </main>
+    );
+  }
+
+  const rows = pipelineRows ?? [];
+  const matchIds = [...new Set(rows.map((row) => row.match_id))];
+
+  const { data: matches, error: matchError } =
+    matchIds.length > 0
+      ? await supabase
+          .from("candidate_vacancy_matches")
+          .select("id, candidate_id, hiring_request_id, status")
+          .in("id", matchIds)
+      : { data: [], error: null };
+
+  if (matchError) {
+    throw new Error(`Unable to load candidate matches: ${matchError.message}`);
+  }
+
+  const matchRecords = matches ?? [];
+
+  const candidateIds = [
+    ...new Set(matchRecords.map((match) => match.candidate_id)),
+  ];
+
+  const hiringRequestIds = [
+    ...new Set(matchRecords.map((match) => match.hiring_request_id)),
+  ];
+
+  const [
+    { data: candidateProfiles },
+    { data: profiles },
+    { data: hiringRequests },
+  ] = await Promise.all([
+    candidateIds.length
+      ? supabase
+          .from("candidate_profiles")
+          .select("id, city, experience_years, current_position")
+          .in("id", candidateIds)
+      : Promise.resolve({ data: [] }),
+
+    candidateIds.length
+      ? supabase
+          .from("profiles")
+          .select("id, full_name")
+          .in("id", candidateIds)
+      : Promise.resolve({ data: [] }),
+
+    hiringRequestIds.length
+      ? supabase
+          .from("restaurant_hiring_requests")
+          .select("id, restaurant_id, title, department, city")
+          .in("id", hiringRequestIds)
+      : Promise.resolve({ data: [] }),
+  ]);
+
+  const restaurantIds = [
+    ...new Set(
+      (hiringRequests ?? []).map((request) => request.restaurant_id)
+    ),
+  ];
+
+  const { data: restaurants } =
+    restaurantIds.length > 0
+      ? await supabase
+          .from("restaurants")
+          .select("id, name")
+          .in("id", restaurantIds)
+      : { data: [] };
+
+  const matchMap = new Map(
+    matchRecords.map((item) => [item.id, item])
+  );
+
+  const candidateMap = new Map(
+    (candidateProfiles ?? []).map((item) => [item.id, item])
+  );
+
+  const profileMap = new Map(
+    (profiles ?? []).map((item) => [item.id, item])
+  );
+
+  const hiringMap = new Map(
+    (hiringRequests ?? []).map((item) => [item.id, item])
+  );
+
+  const restaurantMap = new Map(
+    (restaurants ?? []).map((item) => [item.id, item])
+  );
+
+  const records: PipelineRecord[] = rows.flatMap((row) => {
+    const match = matchMap.get(row.match_id);
+
+    if (!match) return [];
+
+    const candidate = candidateMap.get(match.candidate_id);
+    const profile = profileMap.get(match.candidate_id);
+    const vacancy = hiringMap.get(match.hiring_request_id);
+
+    return [
+      {
+        id: row.id,
+        matchId: row.match_id,
+        stage: row.stage,
+        internalNotes: row.internal_notes ?? "",
+        consentObtainedAt: row.consent_obtained_at,
+        consentMethod: row.consent_method,
+        consentScope: row.consent_scope,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        candidateName: profile?.full_name ?? "Candidate",
+        candidatePosition: candidate?.current_position ?? "",
+        candidateCity: candidate?.city ?? "",
+        candidateExperience: candidate?.experience_years,
+        vacancyTitle: vacancy?.title ?? "Vacancy",
+        department: vacancy?.department ?? "",
+        hiringCity: vacancy?.city ?? "",
+        restaurantName: vacancy
+          ? restaurantMap.get(vacancy.restaurant_id)?.name ?? "Restaurant"
+          : "Restaurant",
+        matchStatus: match.status,
+      },
+    ];
+  });
+
+  return (
+    <main className="min-h-screen bg-background">
+      <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:py-12">
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-6">
+          <div>
+            <Link href="/ops" className="text-sm text-muted hover:underline">
+              â† Operations
+            </Link>
+
+            <p className="mt-3 text-xs font-semibold tracking-wider text-sage">
+              APRONLY Â· PEOPLE OPERATIONS
+            </p>
+
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight">
+              Recruitment pipeline
+            </h1>
+
+            <p className="mt-2 text-sm text-muted">
+              Track accepted invitations through contact, consent, interviews
+              and placement.
+            </p>
+          </div>
+
+          <Link
+            href="/ops"
+            className="rounded-xl border border-border px-4 py-2 text-sm font-medium hover:bg-surface-muted"
+          >
+            Back to dashboard
+          </Link>
+        </header>
+
+        <PipelineClient initialRecords={records} />
+      </div>
+    </main>
+  );
+}
+

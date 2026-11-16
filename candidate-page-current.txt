@@ -1,0 +1,1126 @@
+"use client";
+
+import { useEffect, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
+
+const employmentOptions = [
+  "Currently employed",
+  "Open to opportunities",
+  "Not currently employed",
+  "Student",
+  "Freelancer",
+];
+
+const roleOptions = [
+  "Chef",
+  "Commis Chef",
+  "Sous Chef",
+  "Head Chef",
+  "Kitchen Helper",
+  "Restaurant Manager",
+  "Assistant Restaurant Manager",
+  "Waiter / Server",
+  "Captain / Supervisor",
+  "Host / Hostess",
+  "Bartender",
+  "Barista",
+  "Cashier",
+  "Steward",
+  "Housekeeping Associate",
+  "Front Desk Associate",
+  "Hotel Operations",
+];
+
+const departmentOptions = [
+  "Kitchen",
+  "Food & Beverage Service",
+  "Bar",
+  "Front Office",
+  "Housekeeping",
+  "Stewarding",
+  "Restaurant Operations",
+  "Hotel Operations",
+  "Administration",
+];
+
+const workTypeOptions = [
+  "Full-time",
+  "Part-time",
+  "Contract",
+  "Internship",
+  "Temporary",
+  "Apprenticeship",
+];
+
+const salaryPeriods = [
+  { value: "hourly", label: "Per hour" },
+  { value: "daily", label: "Per day" },
+  { value: "weekly", label: "Per week" },
+  { value: "monthly", label: "Per month" },
+  { value: "yearly", label: "Per year" },
+];
+
+const languageProficiencies = [
+  { value: "basic", label: "Basic" },
+  { value: "conversational", label: "Conversational" },
+  { value: "professional", label: "Professional" },
+  { value: "fluent", label: "Fluent" },
+  { value: "native", label: "Native" },
+];
+
+type CandidateLanguage = {
+  language: string;
+  proficiency: string;
+};
+
+type CandidateJobPreferences = {
+  preferred_roles: string[] | null;
+  preferred_departments: string[] | null;
+  employment_types: string[] | null;
+  minimum_salary: number | null;
+  maximum_salary: number | null;
+  salary_period: string | null;
+  availability_status: string | null;
+  available_from: string | null;
+  notice_period_days: number | null;
+};
+
+function parseList(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => item.replace(/\s+/g, " "))
+    )
+  );
+}
+
+function SelectionGroup({
+  title,
+  description,
+  options,
+  selected,
+  onToggle,
+}: {
+  title: string;
+  description: string;
+  options: string[];
+  selected: string[];
+  onToggle: (option: string) => void;
+}) {
+  return (
+    <div>
+      <p className="text-sm font-medium">{title}</p>
+      <p className="mt-1 text-xs text-muted">{description}</p>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {options.map((option) => {
+          const isSelected = selected.includes(option);
+
+          return (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={isSelected}
+              onClick={() => onToggle(option)}
+              className={`rounded-full border px-4 py-2 text-sm transition ${
+                isSelected
+                  ? "border-accent bg-accent/10 text-foreground"
+                  : "border-border bg-background text-muted hover:border-accent"
+              }`}
+            >
+              {option}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default function CandidateOnboardingPage() {
+  const router = useRouter();
+
+  // Existing candidate profile fields
+  const [city, setCity] = useState("");
+  const [preferredCities, setPreferredCities] = useState("");
+  const [skills, setSkills] = useState("");
+  const [experience, setExperience] = useState("0");
+  const [currentPosition, setCurrentPosition] = useState("");
+  const [employmentStatus, setEmploymentStatus] = useState("");
+  const [bio, setBio] = useState("");
+
+  // Job preference fields
+  const [preferredRoles, setPreferredRoles] = useState<string[]>([]);
+  const [preferredDepartments, setPreferredDepartments] = useState<string[]>(
+    []
+  );
+  const [employmentTypes, setEmploymentTypes] = useState<string[]>([]);
+
+  const [minimumSalary, setMinimumSalary] = useState("");
+  const [maximumSalary, setMaximumSalary] = useState("");
+  const [salaryPeriod, setSalaryPeriod] = useState("monthly");
+
+  const [availabilityStatus, setAvailabilityStatus] = useState("flexible");
+  const [availableFrom, setAvailableFrom] = useState("");
+  const [noticePeriodDays, setNoticePeriodDays] = useState("");
+
+  const [languages, setLanguages] = useState<CandidateLanguage[]>([]);
+  const [languagesLoading, setLanguagesLoading] = useState(true);
+
+  const [preferencesLoading, setPreferencesLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  // Load existing job preferences when a candidate revisits onboarding.
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadPreferences() {
+      try {
+        const supabase = createClient();
+
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
+
+        if (authError || !user) {
+          router.replace("/login");
+          return;
+        }
+
+        const [preferencesResult, languagesResult] = await Promise.all([
+          supabase
+            .from("candidate_job_preferences")
+            .select(
+              [
+                "preferred_roles",
+                "preferred_departments",
+                "employment_types",
+                "minimum_salary",
+                "maximum_salary",
+                "salary_period",
+                "availability_status",
+                "available_from",
+                "notice_period_days",
+              ].join(", ")
+            )
+            .eq("candidate_id", user.id)
+            .maybeSingle(),
+          supabase
+            .from("candidate_languages")
+            .select("language, proficiency")
+            .eq("candidate_id", user.id)
+            .order("language", { ascending: true }),
+        ]);
+
+        if (preferencesResult.error) throw preferencesResult.error;
+        if (languagesResult.error) throw languagesResult.error;
+        if (!isMounted) return;
+
+        const preferences =
+          preferencesResult.data as unknown as CandidateJobPreferences | null;
+
+        if (preferences) {
+          setPreferredRoles(preferences.preferred_roles ?? []);
+          setPreferredDepartments(preferences.preferred_departments ?? []);
+          setEmploymentTypes(preferences.employment_types ?? []);
+          setMinimumSalary(
+            preferences.minimum_salary == null
+              ? ""
+              : String(preferences.minimum_salary)
+          );
+          setMaximumSalary(
+            preferences.maximum_salary == null
+              ? ""
+              : String(preferences.maximum_salary)
+          );
+          setSalaryPeriod(preferences.salary_period ?? "monthly");
+          setAvailabilityStatus(preferences.availability_status ?? "flexible");
+          setAvailableFrom(preferences.available_from ?? "");
+          setNoticePeriodDays(
+            preferences.notice_period_days == null
+              ? ""
+              : String(preferences.notice_period_days)
+          );
+        }
+
+        setLanguages(
+          (languagesResult.data ?? []).map((item) => ({
+            language: item.language,
+            proficiency: item.proficiency,
+          }))
+        );
+      } catch (error) {
+        console.error("Could not load candidate preferences:", error);
+
+        if (isMounted) {
+          setErrorMessage(
+            "We couldn't load your saved job preferences. Please refresh and try again."
+          );
+        }
+      } finally {
+        if (isMounted) {
+          setPreferencesLoading(false);
+          setLanguagesLoading(false);
+        }
+      }
+    }
+
+    void loadPreferences();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
+  function toggleSelection(
+    option: string,
+    selected: string[],
+    setter: (values: string[]) => void
+  ) {
+    setter(
+      selected.includes(option)
+        ? selected.filter((item) => item !== option)
+        : [...selected, option]
+    );
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setErrorMessage("");
+
+    if (submitting || preferencesLoading || languagesLoading) {
+      return;
+    }
+
+    // Normalize existing profile fields.
+    const cleanCity = city.trim().replace(/\s+/g, " ");
+    const cleanPreferredCities = parseList(preferredCities);
+    const cleanSkills = parseList(skills);
+    const experienceValue = Number(experience);
+    const cleanPosition = currentPosition.trim();
+    const cleanBio = bio.trim();
+
+    // Existing profile validation.
+    if (cleanCity.length < 2 || cleanCity.length > 100) {
+      setErrorMessage("Please enter a valid current city.");
+      return;
+    }
+
+    if (
+      !Number.isFinite(experienceValue) ||
+      experienceValue < 0 ||
+      experienceValue > 80
+    ) {
+      setErrorMessage("Experience must be between 0 and 80 years.");
+      return;
+    }
+
+    if (cleanPreferredCities.length > 20) {
+      setErrorMessage("You can add up to 20 preferred cities.");
+      return;
+    }
+
+    if (cleanSkills.length > 50) {
+      setErrorMessage("You can add up to 50 skills.");
+      return;
+    }
+
+    if (
+      cleanPreferredCities.some(
+        (item) => item.length < 2 || item.length > 100
+      ) ||
+      cleanSkills.some((item) => item.length > 80)
+    ) {
+      setErrorMessage(
+        "Please keep each city under 100 characters and each skill under 80 characters."
+      );
+      return;
+    }
+
+    if (cleanPosition.length > 150) {
+      setErrorMessage("Your current position must be 150 characters or fewer.");
+      return;
+    }
+
+    if (cleanBio.length > 1000) {
+      setErrorMessage("Your introduction must be 1,000 characters or fewer.");
+      return;
+    }
+
+    // Job preference validation.
+    if (
+      preferredRoles.length > 20 ||
+      preferredDepartments.length > 20 ||
+      employmentTypes.length > 10
+    ) {
+      setErrorMessage("Please reduce your job preference selections.");
+      return;
+    }
+
+    const minSalary = minimumSalary.trim()
+      ? Number(minimumSalary)
+      : null;
+
+    const maxSalary = maximumSalary.trim()
+      ? Number(maximumSalary)
+      : null;
+
+    const maxAllowedSalary = 9999999999.99;
+
+    if (
+      (minSalary !== null &&
+        (!Number.isFinite(minSalary) ||
+          minSalary < 0 ||
+          minSalary > maxAllowedSalary)) ||
+      (maxSalary !== null &&
+        (!Number.isFinite(maxSalary) ||
+          maxSalary < 0 ||
+          maxSalary > maxAllowedSalary))
+    ) {
+      setErrorMessage("Please enter valid salary amounts.");
+      return;
+    }
+
+    if (
+      minSalary !== null &&
+      maxSalary !== null &&
+      minSalary > maxSalary
+    ) {
+      setErrorMessage("Minimum salary cannot exceed maximum salary.");
+      return;
+    }
+
+    const hasSalaryExpectation =
+      minSalary !== null || maxSalary !== null;
+
+    if (
+      hasSalaryExpectation &&
+      !salaryPeriods.some((period) => period.value === salaryPeriod)
+    ) {
+      setErrorMessage("Please select a valid salary period.");
+      return;
+    }
+
+    const noticeDays = noticePeriodDays.trim()
+      ? Number(noticePeriodDays)
+      : null;
+
+    if (
+      availabilityStatus === "notice_period" &&
+      (noticeDays === null ||
+        !Number.isInteger(noticeDays) ||
+        noticeDays < 0 ||
+        noticeDays > 365)
+    ) {
+      setErrorMessage("Enter a notice period between 0 and 365 days.");
+      return;
+    }
+
+    if (
+      availabilityStatus === "specific_date" &&
+      !availableFrom
+    ) {
+      setErrorMessage("Please select your available-from date.");
+      return;
+    }
+
+    if (
+      !["immediate", "notice_period", "specific_date", "flexible"].includes(
+        availabilityStatus
+      )
+    ) {
+      setErrorMessage("Please select a valid availability option.");
+      return;
+    }
+
+    const cleanLanguages = languages.map((item) => ({
+      language: item.language.trim().replace(/\\s+/g, " "),
+      proficiency: item.proficiency.trim().toLowerCase(),
+    }));
+
+    if (cleanLanguages.length > 20) {
+      setErrorMessage("You can add up to 20 languages.");
+      return;
+    }
+
+    if (
+      cleanLanguages.some(
+        (item) =>
+          item.language.length < 2 ||
+          item.language.length > 60 ||
+          !languageProficiencies.some((level) => level.value === item.proficiency)
+      )
+    ) {
+      setErrorMessage("Please check each language and proficiency level.");
+      return;
+    }
+
+    const normalizedLanguageNames = cleanLanguages.map((item) =>
+      item.language.toLowerCase()
+    );
+    if (new Set(normalizedLanguageNames).size !== normalizedLanguageNames.length) {
+      setErrorMessage("Please remove duplicate languages.");
+      return;
+    }
+
+    setSubmitting(true);
+
+    try {
+      const supabase = createClient();
+
+      const {
+        data: { user },
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !user) {
+        router.replace("/login");
+        return;
+      }
+
+      // One RPC saves the candidate profile and job preferences
+      // in the same PostgreSQL transaction.
+      const { error: onboardingError } = await supabase.rpc(
+        "complete_candidate_onboarding_with_preferences",
+        {
+          p_city: cleanCity,
+          p_preferred_cities: cleanPreferredCities,
+          p_skills: cleanSkills,
+          p_experience_years: experienceValue,
+          p_current_position: cleanPosition || null,
+          p_employment_status: employmentStatus || null,
+          p_bio: cleanBio || null,
+
+          p_preferred_roles: preferredRoles,
+          p_preferred_departments: preferredDepartments,
+          p_employment_types: employmentTypes,
+          p_minimum_salary: minSalary,
+          p_maximum_salary: maxSalary,
+          p_salary_currency: "INR",
+          p_salary_period: hasSalaryExpectation ? salaryPeriod : null,
+          p_availability_status: availabilityStatus,
+          p_available_from:
+            availabilityStatus === "specific_date" ? availableFrom : null,
+          p_notice_period_days:
+            availabilityStatus === "notice_period" ? noticeDays : null,
+          p_languages: cleanLanguages,
+        }
+      );
+
+      if (onboardingError) {
+        throw onboardingError;
+      }
+
+      // 3. Continue through the existing completion flow.
+      router.replace("/auth/complete");
+      router.refresh();
+    } catch (error) {
+      console.error("Candidate onboarding error:", error);
+
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong. Please try again."
+      );
+
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-background px-5 py-10 text-foreground sm:px-8">
+      <div className="mx-auto max-w-2xl">
+        <header className="mb-10">
+          <Link href="/" className="text-xl font-bold tracking-tight">
+            apron<span className="text-accent">ly</span>
+          </Link>
+
+          <div className="mt-10">
+            <p className="text-sm font-semibold uppercase tracking-[0.18em] text-muted">
+              Candidate profile Â· Step 1 of 1
+            </p>
+
+            <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+              Let&apos;s build your profile.
+            </h1>
+
+            <p className="mt-3 max-w-xl text-sm leading-6 text-muted sm:text-base">
+              Tell us a little about your hospitality experience and the
+              opportunities you&apos;re looking for. This helps Apronly find
+              relevant roles for you.
+            </p>
+          </div>
+        </header>
+
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* 01 â€” Location */}
+          <section className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
+            <div className="mb-6">
+              <p className="text-xs font-semibold uppercase tracking-widest text-accent">
+                01 Â· Location
+              </p>
+
+              <h2 className="mt-2 text-xl font-semibold">
+                Where are you based?
+              </h2>
+
+              <p className="mt-1 text-sm text-muted">
+                Your current location and where you would consider working.
+              </p>
+            </div>
+
+            <div className="space-y-5">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium">
+                  Current city <span className="text-danger">*</span>
+                </span>
+
+                <input
+                  required
+                  minLength={2}
+                  maxLength={100}
+                  value={city}
+                  onChange={(event) => setCity(event.target.value)}
+                  placeholder="e.g. Hyderabad"
+                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium">
+                  Preferred work cities
+                </span>
+
+                <input
+                  value={preferredCities}
+                  onChange={(event) =>
+                    setPreferredCities(event.target.value)
+                  }
+                  placeholder="Hyderabad, Mumbai, Pune"
+                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                />
+
+                <span className="mt-2 block text-xs text-muted">
+                  Separate multiple cities with commas. You can leave this
+                  blank.
+                </span>
+              </label>
+            </div>
+          </section>
+
+          {/* 02 â€” Experience */}
+          <section className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
+            <div className="mb-6">
+              <p className="text-xs font-semibold uppercase tracking-widest text-accent">
+                02 Â· Experience
+              </p>
+
+              <h2 className="mt-2 text-xl font-semibold">
+                Tell us about your work.
+              </h2>
+
+              <p className="mt-1 text-sm text-muted">
+                Experience counts, whether in a restaurant, hotel, cafÃ© or
+                another hospitality setting.
+              </p>
+            </div>
+
+            <div className="grid gap-5 sm:grid-cols-2">
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium">
+                  Total experience (years)
+                </span>
+
+                <input
+                  type="number"
+                  min="0"
+                  max="80"
+                  step="0.5"
+                  value={experience}
+                  onChange={(event) => setExperience(event.target.value)}
+                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-medium">
+                  Employment status
+                </span>
+
+                <select
+                  value={employmentStatus}
+                  onChange={(event) =>
+                    setEmploymentStatus(event.target.value)
+                  }
+                  className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                >
+                  <option value="">Select status</option>
+
+                  {employmentOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <label className="mt-5 block">
+              <span className="mb-2 block text-sm font-medium">
+                Current or last job position
+              </span>
+
+              <input
+                maxLength={150}
+                value={currentPosition}
+                onChange={(event) =>
+                  setCurrentPosition(event.target.value)
+                }
+                placeholder="e.g. Commis Chef, Restaurant Manager, Waiter"
+                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+              />
+            </label>
+          </section>
+
+          {/* 03 â€” Skills */}
+          <section className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
+            <div className="mb-6">
+              <p className="text-xs font-semibold uppercase tracking-widest text-accent">
+                03 Â· Skills
+              </p>
+
+              <h2 className="mt-2 text-xl font-semibold">
+                What are you good at?
+              </h2>
+
+              <p className="mt-1 text-sm text-muted">
+                Add the skills that best describe your capabilities.
+              </p>
+            </div>
+
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium">
+                Your skills
+              </span>
+
+              <textarea
+                rows={3}
+                value={skills}
+                onChange={(event) => setSkills(event.target.value)}
+                placeholder="Customer service, food preparation, inventory management, POS..."
+                className="w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+              />
+
+              <span className="mt-2 block text-xs text-muted">
+                Separate skills with commas. Add up to 50.
+              </span>
+            </label>
+          </section>
+
+          {/* 04 â€” Introduction */}
+          <section className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
+            <div className="mb-6">
+              <p className="text-xs font-semibold uppercase tracking-widest text-accent">
+                04 Â· Introduction
+              </p>
+
+              <h2 className="mt-2 text-xl font-semibold">
+                Introduce yourself.
+              </h2>
+
+              <p className="mt-1 text-sm text-muted">
+                Give employers a short overview of your professional
+                background and strengths.
+              </p>
+            </div>
+
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium">
+                About you
+              </span>
+
+              <textarea
+                rows={5}
+                maxLength={1000}
+                value={bio}
+                onChange={(event) => setBio(event.target.value)}
+                placeholder="Share your experience, strengths and the kind of hospitality work you're interested in..."
+                className="w-full resize-y rounded-xl border border-border bg-background px-4 py-3 text-sm leading-6 outline-none transition focus:border-accent"
+              />
+
+              <span className="mt-2 block text-right text-xs text-muted">
+                {bio.length}/1000
+              </span>
+            </label>
+          </section>
+
+          {/* 05 â€” Job Preferences */}
+          <section className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
+            <div className="mb-6">
+              <p className="text-xs font-semibold uppercase tracking-widest text-accent">
+                05 Â· Job preferences
+              </p>
+
+              <h2 className="mt-2 text-xl font-semibold">
+                What kind of work are you looking for?
+              </h2>
+
+              <p className="mt-1 text-sm text-muted">
+                Tell us what roles interest you and what kind of work
+                arrangement you prefer.
+              </p>
+            </div>
+
+            {preferencesLoading ? (
+              <p className="text-sm text-muted">
+                Loading your saved preferences...
+              </p>
+            ) : (
+              <div className="space-y-8">
+                <SelectionGroup
+                  title="Preferred job roles"
+                  description="Select all the roles you would consider."
+                  options={roleOptions}
+                  selected={preferredRoles}
+                  onToggle={(option) =>
+                    toggleSelection(
+                      option,
+                      preferredRoles,
+                      setPreferredRoles
+                    )
+                  }
+                />
+
+                <SelectionGroup
+                  title="Preferred departments"
+                  description="Which hospitality departments interest you?"
+                  options={departmentOptions}
+                  selected={preferredDepartments}
+                  onToggle={(option) =>
+                    toggleSelection(
+                      option,
+                      preferredDepartments,
+                      setPreferredDepartments
+                    )
+                  }
+                />
+
+                <SelectionGroup
+                  title="Employment types"
+                  description="Choose all arrangements you would consider."
+                  options={workTypeOptions}
+                  selected={employmentTypes}
+                  onToggle={(option) =>
+                    toggleSelection(
+                      option,
+                      employmentTypes,
+                      setEmploymentTypes
+                    )
+                  }
+                />
+
+                <div className="border-t border-border pt-6">
+                  <h3 className="text-sm font-semibold">
+                    Salary expectations
+                  </h3>
+
+                  <p className="mt-1 text-xs text-muted">
+                    Optional. Leave both fields blank if you are flexible.
+                    Currency is INR.
+                  </p>
+
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-medium">
+                        Minimum salary (â‚¹)
+                      </span>
+
+                      <input
+                        type="number"
+                        min="0"
+                        max="9999999999.99"
+                        step="0.01"
+                        value={minimumSalary}
+                        onChange={(event) =>
+                          setMinimumSalary(event.target.value)
+                        }
+                        placeholder="e.g. 15000"
+                        className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-sm font-medium">
+                        Maximum salary (â‚¹)
+                      </span>
+
+                      <input
+                        type="number"
+                        min="0"
+                        max="9999999999.99"
+                        step="0.01"
+                        value={maximumSalary}
+                        onChange={(event) =>
+                          setMaximumSalary(event.target.value)
+                        }
+                        placeholder="e.g. 25000"
+                        className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                      />
+                    </label>
+                  </div>
+
+                  <label className="mt-4 block">
+                    <span className="mb-2 block text-sm font-medium">
+                      Salary period
+                    </span>
+
+                    <select
+                      value={salaryPeriod}
+                      onChange={(event) =>
+                        setSalaryPeriod(event.target.value)
+                      }
+                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                    >
+                      {salaryPeriods.map((period) => (
+                        <option key={period.value} value={period.value}>
+                          {period.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <div className="border-t border-border pt-6">
+                  <h3 className="text-sm font-semibold">
+                    Availability
+                  </h3>
+
+                  <p className="mt-1 text-xs text-muted">
+                    When would you be able to join a new role?
+                  </p>
+
+                  <label className="mt-4 block">
+                    <span className="mb-2 block text-sm font-medium">
+                      When can you join?
+                    </span>
+
+                    <select
+                      value={availabilityStatus}
+                      onChange={(event) => {
+                        setAvailabilityStatus(event.target.value);
+                        setAvailableFrom("");
+                        setNoticePeriodDays("");
+                      }}
+                      className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                    >
+                      <option value="immediate">Immediately</option>
+                      <option value="notice_period">
+                        After my notice period
+                      </option>
+                      <option value="specific_date">
+                        From a specific date
+                      </option>
+                      <option value="flexible">
+                        Flexible / Not sure yet
+                      </option>
+                    </select>
+                  </label>
+
+                  {availabilityStatus === "notice_period" && (
+                    <label className="mt-4 block">
+                      <span className="mb-2 block text-sm font-medium">
+                        Notice period (days)
+                      </span>
+
+                      <input
+                        type="number"
+                        min="0"
+                        max="365"
+                        step="1"
+                        value={noticePeriodDays}
+                        onChange={(event) =>
+                          setNoticePeriodDays(event.target.value)
+                        }
+                        placeholder="e.g. 30"
+                        className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                      />
+                    </label>
+                  )}
+
+                  {availabilityStatus === "specific_date" && (
+                    <label className="mt-4 block">
+                      <span className="mb-2 block text-sm font-medium">
+                        Available from
+                      </span>
+
+                      <input
+                        type="date"
+                        value={availableFrom}
+                        onChange={(event) =>
+                          setAvailableFrom(event.target.value)
+                        }
+                        className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none transition focus:border-accent"
+                      />
+                    </label>
+                  )}
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* 06 — Languages */}
+          <section className="rounded-2xl border border-border bg-surface p-6 sm:p-8">
+            <div className="mb-6">
+              <p className="text-xs font-semibold uppercase tracking-widest text-accent">
+                06 · Languages
+              </p>
+              <h2 className="mt-2 text-xl font-semibold">
+                Which languages do you speak?
+              </h2>
+              <p className="mt-1 text-sm text-muted">
+                Add languages you can use at work and describe your proficiency.
+                This section is optional.
+              </p>
+            </div>
+
+            {languagesLoading ? (
+              <p className="text-sm text-muted">Loading saved languages...</p>
+            ) : (
+              <div className="space-y-4">
+                {languages.map((item, index) => (
+                  <div
+                    key={index}
+                    className="grid gap-3 rounded-xl border border-border p-4 sm:grid-cols-[1fr_1fr_auto]"
+                  >
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-medium text-muted">
+                        Language
+                      </span>
+                      <input
+                        value={item.language}
+                        maxLength={60}
+                        onChange={(event) =>
+                          setLanguages((current) =>
+                            current.map((language, itemIndex) =>
+                              itemIndex === index
+                                ? { ...language, language: event.target.value }
+                                : language
+                            )
+                          )
+                        }
+                        placeholder="e.g. English"
+                        className="w-full rounded-xl border border-border bg-background px-3 py-3 text-sm outline-none focus:border-accent"
+                      />
+                    </label>
+
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-medium text-muted">
+                        Proficiency
+                      </span>
+                      <select
+                        value={item.proficiency}
+                        onChange={(event) =>
+                          setLanguages((current) =>
+                            current.map((language, itemIndex) =>
+                              itemIndex === index
+                                ? { ...language, proficiency: event.target.value }
+                                : language
+                            )
+                          )
+                        }
+                        className="w-full rounded-xl border border-border bg-background px-3 py-3 text-sm outline-none focus:border-accent"
+                      >
+                        {languageProficiencies.map((level) => (
+                          <option key={level.value} value={level.value}>
+                            {level.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setLanguages((current) =>
+                            current.filter((_, itemIndex) => itemIndex !== index)
+                          )
+                        }
+                        className="w-full rounded-xl border border-border px-3 py-3 text-sm text-muted transition hover:border-danger hover:text-danger sm:w-auto"
+                        aria-label={`Remove ${item.language || "language"}`}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  disabled={languages.length >= 20}
+                  onClick={() =>
+                    setLanguages((current) => [
+                      ...current,
+                      { language: "", proficiency: "conversational" },
+                    ])
+                  }
+                  className="rounded-xl border border-border px-4 py-3 text-sm font-medium transition hover:border-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  + Add a language
+                </button>
+                <p className="text-xs text-muted">
+                  Add up to 20 languages. You can leave this section empty.
+                </p>
+              </div>
+            )}
+          </section>
+
+          {/* Error feedback */}
+          {errorMessage && (
+            <div
+              role="alert"
+              className="rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger"
+            >
+              {errorMessage}
+            </div>
+          )}
+
+          {/* Privacy note */}
+          <div className="rounded-2xl bg-surface-muted p-5">
+            <p className="text-sm font-medium">One last thing</p>
+
+            <p className="mt-1 text-sm leading-6 text-muted">
+              Your information will be used to help Apronly match you with
+              suitable hospitality opportunities. Your contact details
+              won&apos;t be publicly displayed on job listings.
+            </p>
+          </div>
+
+          {/* One submission button for the entire page */}
+          <button
+            type="submit"
+            disabled={submitting || preferencesLoading || languagesLoading}
+            className="w-full rounded-xl bg-primary px-6 py-4 text-sm font-semibold text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {preferencesLoading || languagesLoading
+              ? "Loading your saved information..."
+              : submitting
+                ? "Saving your profile..."
+                : "Complete my profile"}
+          </button>
+
+          <p className="pb-6 text-center text-xs text-muted">
+            You can update your profile later.
+          </p>
+        </form>
+      </div>
+    </main>
+  );
+}

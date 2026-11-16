@@ -1,0 +1,611 @@
+﻿"use client";
+
+import { useCallback, useState, type ReactNode } from "react";
+import { createClient } from "@/lib/supabase/client";
+
+type CandidateDocument = {
+  id: string;
+  document_type: string;
+  original_file_name: string;
+  mime_type: string;
+  file_size_bytes: number;
+  verification_status: string;
+  created_at: string;
+};
+
+type Candidate = {
+  candidate_id: string;
+  full_name: string;
+  email: string;
+  phone: string | null;
+  avatar_url: string | null;
+  account_status: string;
+  verification_status: string;
+  bio: string | null;
+  city: string | null;
+  preferred_cities: string[] | null;
+  skills: string[] | null;
+  experience_years: number;
+  current_position: string | null;
+  employment_status: string | null;
+  job_preferences: Record<string, unknown> | null;
+  languages: Array<Record<string, unknown>> | null;
+  employment_history: Array<Record<string, unknown>> | null;
+  documents: CandidateDocument[] | null;
+  profile_created_at: string;
+  profile_updated_at: string;
+  total_count: number;
+};
+
+const PAGE_SIZE = 20;
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return "Not available";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return "Not available";
+
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+  }).format(date);
+}
+
+function Detail({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-medium uppercase tracking-wide text-muted">
+        {label}
+      </p>
+      <div className="mt-1 break-words text-sm leading-6">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function JsonDetails({
+  title,
+  value,
+  emptyMessage,
+}: {
+  title: string;
+  value: unknown;
+  emptyMessage: string;
+}) {
+  const isEmpty =
+    value === null ||
+    value === undefined ||
+    (Array.isArray(value) && value.length === 0) ||
+    (typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value as Record<string, unknown>).length === 0);
+
+  return (
+    <div className="mt-6 border-t border-border pt-5">
+      <h4 className="font-semibold">{title}</h4>
+      {isEmpty ? (
+        <p className="mt-2 text-sm text-muted">{emptyMessage}</p>
+      ) : (
+        <pre className="mt-3 overflow-x-auto whitespace-pre-wrap break-words rounded-xl bg-surface-muted p-4 text-xs leading-6">
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function CandidateProfile({ candidate }: { candidate: Candidate }) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <article className="overflow-hidden rounded-2xl border border-border bg-surface">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={expanded}
+        className="flex w-full flex-wrap items-center justify-between gap-4 p-5 text-left transition hover:bg-surface-muted"
+      >
+        <div className="flex min-w-0 items-center gap-4">
+          {candidate.avatar_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={candidate.avatar_url}
+              alt=""
+              className="h-12 w-12 shrink-0 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10 text-lg font-semibold text-primary">
+              {candidate.full_name?.trim().charAt(0).toUpperCase() || "C"}
+            </div>
+          )}
+
+          <div className="min-w-0">
+            <h3 className="truncate font-semibold">
+              {candidate.full_name || "Unnamed candidate"}
+            </h3>
+            <p className="mt-1 truncate text-sm text-muted">
+              {candidate.current_position || "Position not specified"}
+              {candidate.city ? ` · ${candidate.city}` : ""}
+            </p>
+            <p className="mt-1 text-xs text-muted">
+              {candidate.experience_years} years experience
+            </p>
+          </div>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-3">
+          <span className="rounded-full border border-border px-3 py-1 text-xs font-medium">
+            {candidate.verification_status}
+          </span>
+          <span className="text-sm text-muted">
+            {expanded ? "−" : "+"}
+          </span>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-border p-5">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <Detail label="Email">{candidate.email}</Detail>
+            <Detail label="Phone">
+              {candidate.phone || "Not specified"}
+            </Detail>
+            <Detail label="Account status">{candidate.account_status}</Detail>
+            <Detail label="Verification status">
+              {candidate.verification_status}
+            </Detail>
+            <Detail label="Employment status">
+              {candidate.employment_status || "Not specified"}
+            </Detail>
+            <Detail label="Current city">
+              {candidate.city || "Not specified"}
+            </Detail>
+            <Detail label="Experience">
+              {candidate.experience_years} years
+            </Detail>
+            <Detail label="Preferred cities">
+              {candidate.preferred_cities?.length
+                ? candidate.preferred_cities.join(", ")
+                : "Not specified"}
+            </Detail>
+            <Detail label="Skills">
+              {candidate.skills?.length
+                ? candidate.skills.join(", ")
+                : "Not specified"}
+            </Detail>
+            <Detail label="Profile created">
+              {formatDate(candidate.profile_created_at)}
+            </Detail>
+            <Detail label="Last updated">
+              {formatDate(candidate.profile_updated_at)}
+            </Detail>
+          </div>
+
+          {candidate.bio && (
+            <div className="mt-6 border-t border-border pt-5">
+              <Detail label="Candidate summary">
+                <p className="whitespace-pre-wrap">{candidate.bio}</p>
+              </Detail>
+            </div>
+          )}
+
+          <JsonDetails
+            title="Job preferences"
+            value={candidate.job_preferences}
+            emptyMessage="No job preferences recorded."
+          />
+
+          <JsonDetails
+            title="Languages"
+            value={candidate.languages}
+            emptyMessage="No languages recorded."
+          />
+
+          <JsonDetails
+            title="Employment history"
+            value={candidate.employment_history}
+            emptyMessage="No employment history recorded."
+          />
+
+          <div className="mt-6 border-t border-border pt-5">
+            <h4 className="font-semibold">Documents</h4>
+
+            {candidate.documents?.length ? (
+              <div className="mt-3 space-y-3">
+                {candidate.documents.map((document) => (
+                  <div
+                    key={document.id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-4"
+                  >
+                    <div className="min-w-0">
+                      <p className="break-all text-sm font-medium">
+                        {document.original_file_name}
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        {document.document_type} · {document.mime_type} ·{" "}
+                        {Math.round(document.file_size_bytes / 1024)} KB
+                      </p>
+                      <p className="mt-1 text-xs text-muted">
+                        Uploaded {formatDate(document.created_at)}
+                      </p>
+                    </div>
+
+                    <span className="rounded-full border border-border px-3 py-1 text-xs">
+                      {document.verification_status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-2 text-sm text-muted">
+                No documents uploaded.
+              </p>
+            )}
+
+            <p className="mt-3 text-xs text-muted">
+              Document previews and downloads require a separate authorized
+              and audited access operation. No storage paths are exposed here.
+            </p>
+          </div>
+
+          <div className="mt-6 border-t border-border pt-5">
+            <Detail label="Candidate reference">
+              <span className="break-all font-mono text-xs">
+                {candidate.candidate_id}
+              </span>
+            </Detail>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+export default function CandidateManagement() {
+  const [search, setSearch] = useState("");
+  const [city, setCity] = useState("");
+  const [skill, setSkill] = useState("");
+  const [minimumExperience, setMinimumExperience] = useState("");
+  const [maximumExperience, setMaximumExperience] = useState("");
+  const [employmentStatus, setEmploymentStatus] = useState("");
+  const [preferredRole, setPreferredRole] = useState("");
+
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
+  const [page, setPage] = useState(0);
+  const [totalCount, setTotalCount] = useState(0);
+
+  const searchCandidates = useCallback(
+    async (pageNumber = 0) => {
+      const min = minimumExperience.trim() === ""
+        ? null
+        : Number(minimumExperience);
+
+      const max = maximumExperience.trim() === ""
+        ? null
+        : Number(maximumExperience);
+
+      if (
+        (min !== null && (!Number.isFinite(min) || min < 0)) ||
+        (max !== null && (!Number.isFinite(max) || max < 0))
+      ) {
+        setError("Experience filters must be valid non-negative numbers.");
+        return;
+      }
+
+      if (min !== null && max !== null && min > max) {
+        setError("Minimum experience cannot exceed maximum experience.");
+        return;
+      }
+
+      if (
+        search.length > 150 ||
+        city.length > 100 ||
+        skill.length > 100 ||
+        employmentStatus.length > 100 ||
+        preferredRole.length > 150
+      ) {
+        setError("One or more search filters exceed the allowed length.");
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+      setHasSearched(true);
+
+      try {
+        const supabase = createClient();
+
+        const { data, error: searchError } = await supabase.rpc(
+          "admin_search_candidates",
+          {
+            p_search: search.trim() || null,
+            p_city: city.trim() || null,
+            p_skill: skill.trim() || null,
+            p_min_experience: min,
+            p_max_experience: max,
+            p_employment_status: employmentStatus.trim() || null,
+            p_preferred_role: preferredRole.trim() || null,
+            p_limit: PAGE_SIZE,
+            p_offset: pageNumber * PAGE_SIZE,
+          }
+        );
+
+        if (searchError) throw searchError;
+
+        const rows = (data ?? []) as unknown as Candidate[];
+
+        if (rows.length === 0 && pageNumber > 0) {
+          setCandidates([]);
+          setTotalCount(0);
+          setPage(0);
+          setError(
+            "No records were returned for this page. The results may have changed. Please search again."
+          );
+          return;
+        }
+
+        setCandidates(rows);
+        setTotalCount(rows[0]?.total_count ?? 0);
+        setPage(pageNumber);
+      } catch (err) {
+        console.error("Candidate search failed:", err);
+        setCandidates([]);
+        setTotalCount(0);
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Unable to search candidates. Please try again."
+        );
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      search,
+      city,
+      skill,
+      minimumExperience,
+      maximumExperience,
+      employmentStatus,
+      preferredRole,
+    ]
+  );
+
+  const clearFilters = () => {
+    setSearch("");
+    setCity("");
+    setSkill("");
+    setMinimumExperience("");
+    setMaximumExperience("");
+    setEmploymentStatus("");
+    setPreferredRole("");
+    setCandidates([]);
+    setTotalCount(0);
+    setPage(0);
+    setError("");
+    setHasSearched(false);
+  };
+
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+
+  return (
+    <section className="mt-12">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-sm font-medium text-sage">PEOPLE OPERATIONS</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight">
+            Candidate management
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted">
+            Search the private candidate database, review professional
+            profiles and identify suitable people for approved vacancies.
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-border bg-surface px-5 py-3">
+          <p className="text-xs text-muted">Matching candidates</p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">
+            {totalCount}
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void searchCandidates(0);
+          }}
+        >
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="sm:col-span-2 lg:col-span-3">
+              <span className="mb-2 block text-sm font-medium">
+                Search candidates
+              </span>
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                maxLength={150}
+                placeholder="Name, email, phone, position or skill"
+                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-sage"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-sm font-medium">City</span>
+              <input
+                value={city}
+                onChange={(event) => setCity(event.target.value)}
+                maxLength={100}
+                placeholder="e.g. Hyderabad"
+                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-sage"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-sm font-medium">
+                Specific skill
+              </span>
+              <input
+                value={skill}
+                onChange={(event) => setSkill(event.target.value)}
+                maxLength={100}
+                placeholder="e.g. Customer service"
+                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-sage"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-sm font-medium">
+                Preferred role
+              </span>
+              <input
+                value={preferredRole}
+                onChange={(event) => setPreferredRole(event.target.value)}
+                maxLength={150}
+                placeholder="e.g. Head chef"
+                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-sage"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-sm font-medium">
+                Minimum experience (years)
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={minimumExperience}
+                onChange={(event) => setMinimumExperience(event.target.value)}
+                placeholder="0"
+                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-sage"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-sm font-medium">
+                Maximum experience (years)
+              </span>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={maximumExperience}
+                onChange={(event) => setMaximumExperience(event.target.value)}
+                placeholder="Any"
+                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-sage"
+              />
+            </label>
+
+            <label>
+              <span className="mb-2 block text-sm font-medium">
+                Employment status
+              </span>
+              <input
+                value={employmentStatus}
+                onChange={(event) => setEmploymentStatus(event.target.value)}
+                maxLength={100}
+                placeholder="e.g. employed"
+                className="w-full rounded-xl border border-border bg-background px-4 py-3 text-sm outline-none focus:border-sage"
+              />
+              <span className="mt-1 block text-xs text-muted">
+                Enter the candidate&apos;s recorded status.
+              </span>
+            </label>
+          </div>
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading ? "Searching..." : "Search candidates"}
+            </button>
+
+            <button
+              type="button"
+              onClick={clearFilters}
+              disabled={loading}
+              className="rounded-xl border border-border px-5 py-3 text-sm font-medium transition hover:bg-surface-muted disabled:opacity-50"
+            >
+              Clear filters
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="mt-5 rounded-2xl border border-red-500/30 bg-red-500/5 p-4 text-sm text-red-600"
+        >
+          {error}
+        </div>
+      )}
+
+      <div className="mt-6 space-y-4">
+        {loading ? (
+          <div className="rounded-2xl border border-border bg-surface p-10 text-center">
+            <p className="text-sm text-muted">
+              Searching the candidate database...
+            </p>
+          </div>
+        ) : hasSearched && candidates.length === 0 && !error ? (
+          <div className="rounded-2xl border border-dashed border-border bg-surface p-10 text-center">
+            <h3 className="font-semibold">No matching candidates</h3>
+            <p className="mt-2 text-sm text-muted">
+              Try changing your search terms or filters.
+            </p>
+          </div>
+        ) : (
+          candidates.map((candidate) => (
+            <CandidateProfile
+              key={candidate.candidate_id}
+              candidate={candidate}
+            />
+          ))
+        )}
+      </div>
+
+      {hasSearched && totalPages > 1 && (
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
+          <p className="text-sm text-muted">
+            Page {page + 1} of {totalPages}
+          </p>
+
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={loading || page === 0}
+              onClick={() => void searchCandidates(page - 1)}
+              className="rounded-xl border border-border px-4 py-2 text-sm font-medium disabled:opacity-40"
+            >
+              Previous
+            </button>
+
+            <button
+              type="button"
+              disabled={loading || page + 1 >= totalPages}
+              onClick={() => void searchCandidates(page + 1)}
+              className="rounded-xl border border-border px-4 py-2 text-sm font-medium disabled:opacity-40"
+            >
+              Next
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
