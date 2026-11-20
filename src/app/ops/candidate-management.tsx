@@ -1,4 +1,5 @@
-﻿"use client";
+﻿
+"use client";
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import type { HiringRequest } from "./hiring-review";
@@ -34,6 +35,14 @@ type Candidate = {
   profile_created_at: string;
   profile_updated_at: string;
   total_count: number;
+};
+
+type CandidateDashboardStats = {
+  total_candidate_registrations: number;
+  recruitable_candidates: number;
+  incomplete_profiles: number;
+  approved_vacancies: number;
+  pipeline_records: number;
 };
 
 const PAGE_SIZE = 20;
@@ -520,7 +529,6 @@ function CandidateDetailPanel({
               {candidate.experience_years} years of experience
             </p>
           </div>
-
         </div>
       </div>
 
@@ -625,7 +633,6 @@ function CandidateDetailPanel({
                       Uploaded {formatDate(document.created_at)}
                     </p>
                   </div>
-
                 </div>
               ))}
             </div>
@@ -657,6 +664,7 @@ function CandidateDetailPanel({
     </article>
   );
 }
+
 interface CandidateManagementProps {
   approvedHiringRequests: HiringRequest[];
   vacancyLoadError?: string | null;
@@ -691,6 +699,53 @@ export default function CandidateManagement({
     message: string;
   } | null>(null);
   const [invitationHistoryRefresh, setInvitationHistoryRefresh] = useState(0);
+
+  const [dashboardStats, setDashboardStats] =
+    useState<CandidateDashboardStats | null>(null);
+  const [dashboardStatsLoading, setDashboardStatsLoading] = useState(true);
+  const [dashboardStatsError, setDashboardStatsError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadDashboardStats() {
+      setDashboardStatsLoading(true);
+      setDashboardStatsError("");
+
+      try {
+        const supabase = createClient();
+        const { data, error: statsError } = await supabase.rpc(
+          "admin_candidate_dashboard_stats"
+        );
+
+        if (statsError) throw statsError;
+
+        const rows = (data ?? []) as CandidateDashboardStats[];
+
+        if (active) {
+          setDashboardStats(rows[0] ?? null);
+        }
+      } catch (err) {
+        console.error("Candidate dashboard stats failed:", err);
+
+        if (active) {
+          setDashboardStatsError(
+            err instanceof Error
+              ? err.message
+              : "Unable to load candidate dashboard statistics."
+          );
+        }
+      } finally {
+        if (active) setDashboardStatsLoading(false);
+      }
+    }
+
+    void loadDashboardStats();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const searchCandidates = useCallback(
     async (pageNumber = 0) => {
@@ -914,6 +969,64 @@ export default function CandidateManagement({
         </div>
       </div>
 
+      <section className="mb-6">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {[
+            {
+              label: "Total registrations",
+              value: dashboardStats?.total_candidate_registrations,
+              detail: "Candidate sign-ups",
+            },
+            {
+              label: "Recruitable candidates",
+              value: dashboardStats?.recruitable_candidates,
+              detail: "Active, complete profiles",
+            },
+            {
+              label: "Incomplete profiles",
+              value: dashboardStats?.incomplete_profiles,
+              detail: "Candidate onboarding started",
+            },
+            {
+              label: "Approved vacancies",
+              value: dashboardStats?.approved_vacancies,
+              detail: "Open for recruitment",
+            },
+            {
+              label: "Pipeline records",
+              value: dashboardStats?.pipeline_records,
+              detail: "Existing vacancy matches",
+            },
+          ].map((stat) => (
+            <article
+              key={stat.label}
+              className="min-w-0 rounded-2xl border border-border bg-surface p-4"
+            >
+              <p className="text-[13px] font-semibold text-muted">
+                {stat.label}
+              </p>
+              <p className="mt-3 text-3xl font-semibold tracking-[-0.04em] tabular-nums">
+                {dashboardStatsLoading
+                  ? "—"
+                  : stat.value?.toLocaleString("en-IN") ?? "—"}
+              </p>
+              <p className="mt-1 text-xs font-medium text-muted">
+                {stat.detail}
+              </p>
+            </article>
+          ))}
+        </div>
+
+        {dashboardStatsError && (
+          <p
+            role="alert"
+            className="mt-3 rounded-xl border border-red-500/30 bg-red-500/5 p-3 text-sm text-red-600"
+          >
+            Dashboard statistics could not be loaded: {dashboardStatsError}
+          </p>
+        )}
+      </section>
+
       <section className="mb-6 rounded-3xl border border-border bg-surface p-5 sm:p-6">
         <div>
           <p className="text-[10px] font-bold tracking-[0.16em] text-sage">
@@ -1020,6 +1133,7 @@ export default function CandidateManagement({
           </>
         )}
       </section>
+
       <div className="rounded-3xl border border-border bg-surface p-5 sm:p-6">
         <form
           onSubmit={(event) => {
@@ -1203,9 +1317,9 @@ export default function CandidateManagement({
               {selectedCandidate ? (
                 <>
                   <CandidateDetailPanel
-                      candidate={selectedCandidate}
-                      invitationHistoryRefresh={invitationHistoryRefresh}
-                    />
+                    candidate={selectedCandidate}
+                    invitationHistoryRefresh={invitationHistoryRefresh}
+                  />
 
                   <section className="mt-4 rounded-2xl border border-border bg-surface p-5 sm:p-6">
                     <div>
@@ -1310,6 +1424,7 @@ export default function CandidateManagement({
           </div>
         ) : null}
       </div>
+
       {hasSearched && totalPages > 1 && (
         <div className="mt-6 flex flex-wrap items-center justify-between gap-4">
           <p className="text-[15px] font-semibold text-muted">
@@ -1340,7 +1455,3 @@ export default function CandidateManagement({
     </section>
   );
 }
-
-
-
-

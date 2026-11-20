@@ -10,7 +10,6 @@ import { type HiringRequest } from "../hiring-review";
 export const instant = false;
 
 async function CandidatesPageContent() {
-  // Ensure request-time rendering before any dynamic values are evaluated.
   await connection();
 
   await requireAnyRole(["admin"]);
